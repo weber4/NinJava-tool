@@ -13,8 +13,8 @@ Download and unzip NinJava tool project files to your machine
 Download NW.js framework for your host OS - https://nwjs.io/downloads/ (SDK version comes with developer tools)
 
 ### Run from command line / create link in windows:
-NW.exe expects to receive a path to folder containing package.json file.
-"C:\My projects\nwjs-sdk-v0.26.6-win-x64\nw.exe" "C:\My projects\JavaTool"
+NW.exe expects to receive a path to folder containing package.json file.<br>
+Example: `"C:\My projects\nwjs-sdk-v0.26.6-win-x64\nw.exe" "C:\My projects\JavaTool"`
 
 ### Credits:
 [NW.js](https://nwjs.io/)<br>
