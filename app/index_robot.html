@@ -1,0 +1,488 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <title>Robot Demo 1</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <link rel="stylesheet" href="/css/animate.css">
+    <link rel="stylesheet" href="/css/bootstrap.min.css">
+	<link rel="stylesheet" href="/css/robot.css">
+    <script>
+
+			var SerialPortLib = require('browser-serialport');
+			var SerialPort = SerialPortLib.SerialPort;
+
+			//							Base		Should		Forear		Claw
+			a_min 		= new Array( 	-1.1,		-0.7,		-1.0,		-3);
+			a_n			= new Array( 	-0.55, 		-0.4,		-0.5,		-1);														
+			a_p			= new Array( 	0.55,		0.7,		0.7,		1);
+			a_max 		= new Array(	1.1,		1.4,		1.4,		3);
+			pw_min		= new Array(	1340,		1200,		450,		900);
+			pw_l		= new Array(	918,		930,		717,		900);
+			pw_0		= new Array(	725,		914,		1124,		1100);
+			pw_h		= new Array(	450,		570,		1500,		1300);
+			pw_max		= new Array(	380,		450,		2000,		1600);
+			
+			function setServoAngle(s, a)
+			{
+				//console.log(a);
+				if 		(a <= a_min[s])		pw = pw_min[s];
+				else if (a <= a_n[s])		pw = pw_min[s] + ((pw_l[s]-pw_min[s])/(a_n[s]-a_min[s]))*(a-a_min[s]);
+				else if (a <= 0)			pw = pw_l[s] + ((pw_0[s]-pw_l[s])/(-a_n[s]))*(a-a_n[s]);
+				else if (a <= a_p[s])		pw = pw_0[s] + ((pw_h[s]-pw_0[s])/(a_p[s]))*a;
+				else if (a <= a_max[s])		pw = pw_h[s] + ((pw_max[s]-pw_h[s])/(a_max[s]-a_p[s]))*(a-a_p[s]);
+				else						pw = pw_max[s];
+				
+				pw = Math.round(pw);
+				
+				//console.log("servo=" + s + " angle=" + a + " pw=" + pw);
+				//if (s == 0) console.log("\n");
+				
+				setPWM(s,pw);
+				window.lines[s].append(new Date().getTime(),Math.max(a_min[s]+0.1,a)); // smoothie charts data 
+			}
+			
+			function setPWM(servo, pw)
+			{
+				pw_clipped = Math.min(pw,1600);
+				cmd 							= "<a80"
+				reg_addr 						= 6+4*servo;																// Register address
+				cmd								+= ("0" + reg_addr.toString(16)).slice(-2);	// pad with 0
+				cmd								+= "0000"																		// On tick 
+				cmd								+= ("000"+pw_clipped.toString(16)).slice(-2);				// Off LOW
+				cmd								+= ("000"+pw_clipped.toString(16)).slice(-4,-2);		// Off High
+				cmd								+= ">\r"
+				//console.log(" pw=" + pw + " cmd=" +cmd);
+				//if (!window.document.getElementById("robot-led").className.match(new RegExp('blink')))
+				//	socket.emit('message',cmd);
+				if (sp.connectionId > -1) { sp.write(cmd); }
+			}
+			
+			function set_robot_agles(RBT_base_angle, RBT_arm_angle, RBT_forearm_angle, RBT_claw)
+			{
+					setServoAngle(3,parseFloat(RBT_claw));
+					setServoAngle(2,parseFloat(RBT_forearm_angle));
+					setServoAngle(1,parseFloat(RBT_arm_angle));
+					setServoAngle(0,parseFloat(RBT_base_angle));
+			}
+			
+			function toggle_playback()
+			{
+				//console.log(document.getElementById('playback_cb').checked);
+				if (document.getElementById('playback_cb').checked ) controller.plugins.playback.player.play();
+				else controller.plugins.playback.player.pause();
+			}
+			
+			function init() 
+			{
+				window.lines = new Array();
+				for (var i = 0; i < 4; i++)	window.lines[i] = new TimeSeries();
+
+				// load select element with PC's COM ports
+				SerialPortLib.list(function (err, ports) {
+					index=0;
+					ports.forEach(function(port) {
+						if (port.manufacturer)
+						{
+							var opt = document.createElement("option");
+							opt.value = port.comName;
+							opt.innerHTML = port.comName + "(" + port.manufacturer + ")";
+
+							// then append it to the select element
+							document.getElementById("com_sel").appendChild(opt);
+							index++;
+							//console.log(port.comName, "," , port.pnpId, ",", port.manufacturer);
+						}
+					});
+				});
+
+				window.document.getElementById("RBT_base_angle").min = a_min[0];
+				window.document.getElementById("RBT_base_angle").max = a_max[0];
+				window.document.getElementById("RBT_arm_angle").min = a_min[1];
+				window.document.getElementById("RBT_arm_angle").max = a_max[1];
+				window.document.getElementById("RBT_forearm_angle").min = a_min[2];
+				window.document.getElementById("RBT_forearm_angle").max = a_max[2];
+				window.document.getElementById("RBT_claw").min = a_min[3];
+				window.document.getElementById("RBT_claw").max = a_max[3];
+				
+				var myInt = setInterval(
+					function(){ 
+						set_robot_agles(
+							window.document.getElementById("RBT_base_angle").value, 
+							window.document.getElementById("RBT_arm_angle").value, 
+							window.document.getElementById("RBT_forearm_angle").value, 
+							window.document.getElementById("RBT_claw").value);
+					 }, 50);
+				
+				window.smoothies = new Array();
+				for (var i = 0; i < 4; i++){
+					//window.lines[i] = new TimeSeries();
+					window.smoothies[i] = new SmoothieChart({ grid:{fillStyle:'#f0f0f0',strokeStyle:'#e0e0e0'},labels:{disabled:true}, maxValue:a_max[i],minValue:a_min[i]}); // strokeStyle: 'rgb(125, 0, 0)', fillStyle: 'rgb(60, 0, 0)', lineWidth: 1, millisPerPixel: 15,scaleSmoothing:1,
+					window.smoothies[i].addTimeSeries(window.lines[i], { lineWidth:1,strokeStyle:'#003000'  });
+					smoothies[i].streamTo(document.getElementById("mycanvas" + i), 100);
+				}
+				//smoothie.addTimeSeries(line2, { strokeStyle: 'rgb(255, 0, 255)', fillStyle: 'rgba(255, 0, 255, 0.3)', lineWidth: 3 });
+
+				
+				/*
+				socket = io.connect();
+				socket.on('connect', function () {
+				  //console.log("Connected to Server!")
+				  document.getElementById("server-led").className =  document.getElementById("server-led").className.replace ( /(?:^|\s)blink(?!\S)/g , '' );  
+							socket.emit('message','<a800020>\r'); // I2C Enable autoincrement address
+							socket.emit('message','<a80FE79>\r'); // I2C set refresh rate 50Hz
+				});
+        
+				socket.on('message', function (msg) {
+				console.log("Msg:"+msg);
+				if (msg == "Robot connected") {
+				document.getElementById("robot-led").className =  document.getElementById("robot-led").className.replace ( /(?:^|\s)blink(?!\S)/g , '' ); 
+						}
+				if (msg == "Robot disconnected") {
+				document.getElementById("robot-led").className += " blink";  
+						}
+				});
+     
+				socket.on('disconnect', function() {
+				  document.getElementById("server-led").className += " blink";
+				});
+				*/
+        
+    }
+	
+	var sp = new SerialPort('COM154', {
+		baudrate: 115200,
+		buffersize: 1
+	}, true);
+	
+	sp.on("open", function() {
+
+		console.log("Serial Connection Opened");
+	
+		sp.on("error", function(string) {
+			console.log("Serial Connection Error");
+		});
+
+		sp.on("data", function(data) {
+			console.log("Serial RCV:" + data.toString());
+		});
+		
+		//sp.write('ATE0\r');
+		
+			//setInterval( function() {sp.write('ATI1\r');console.log('sending ATI1');} ,1000);
+
+	});
+
+      
+    </script>
+  </head>
+<body onload="init();">
+
+	<nav class="navbar navbar-default">
+		<div class="container">
+		<!-- Brand and toggle get grouped for better mobile display -->
+			<div class="navbar-header">
+			  <a class="navbar-brand" href="#"><b>Concept Board Robot - DEMO</b></a>
+			</div>
+		</div><!-- /.container -->
+	</nav>
+	<br>
+	<br>
+    <div class="container" style="">
+			<div class="row">
+				<div class="col-sm-7">
+					<div style="border:1px solid lightgray;10px;padding:0px;">
+							<div id="canvas" style="padding:0;width:600px;height:350px;"></div>	
+					</div> 
+				</div>
+				<div class="col-sm-4">
+					<div class="row">
+						<div class="col-xs-3 vcenter">Claw</div>
+						<div class="col-xs-3 vcenter" style="padding:0;width:100px;"><canvas id="mycanvas3" width="100" height="35"></canvas></div>
+						<div class="col-xs-6 vcenter" style="width:180px;"><input type="range" class="myrange" id="RBT_claw" value=0 step=".01"></div>
+					</div> 
+					<div class="row">
+						<div class="col-xs-3 vcenter">Forearm</div>
+						<div class="col-xs-3 vcenter" style="padding:0;width:100px;"><canvas id="mycanvas2" width="100" height="35"></canvas></div>
+						<div class="col-xs-6 vcenter" style="width:180px;"><input type="range" class="myrange" id="RBT_forearm_angle" value=0 step=".01"></div>
+					</div> 
+					<div class="row">
+						<div class="col-xs-3 vcenter">Shoulder</div>
+						<div class="col-xs-3 vcenter" style="padding:0;width:100px;"><canvas id="mycanvas1" width="100" height="35"></canvas></div>
+						<div class="col-xs-6 vcenter" style="width:180px;"><input type="range" class="myrange" id="RBT_arm_angle" value=0 step=".01"></div>
+					</div> 
+					<div class="row">
+						<div class="col-xs-3 vcenter">Base rot</div>
+						<div class="col-xs-3 vcenter" style="padding:0;width:100px;"><canvas id="mycanvas0" width="100" height="35"></canvas></div>
+						<div class="col-xs-6 vcenter" style="width:180px;"><input type="range" class="myrange" id="RBT_base_angle" value=0 step=".01"></div>
+					</div> 
+					<div class="row">
+						<div class="checkbox"><label style="margin-left: 16px;"><input id="playback_cb" type="checkbox" onChange="toggle_playback();">Playback</label></div>
+					</div> 
+				</div>
+			</div>
+		</div>
+    <script src="js/three.min.js"></script>
+    <script src="js/smoothie.js"></script>
+    <script src="js/leap-0.6.4.js"></script>
+    <script src="js/leap.riggedHand.js"></script>
+    <script src="js/leap.plugins.js"></script>
+ 	<script src="js/OrbitControls.js"></script>
+
+
+    <script>
+
+	const LEAP_scale		= 6;
+	const LEAP_offsetX		= 20;
+	const LEAP_offsetZ		= 0;
+		
+	var RBT_base_radius     = 2;
+	var RBT_base_height     = 5;
+	var RBT_arm_length      = 10.5;
+	var RBT_forearm_length  = 10;
+	var RBT_wrist_offset    = 3;
+	var RBT_wrist_length    = 8;
+	var RBT_claw_base_length= 2;
+	var RBT_finger_length	= 6;
+	var RBT_finger_width	= .5;
+
+	var RBT_link_width      = 6;
+	var RBT_link_thickness  = 1;
+
+	var RBT_joint_radius    = .7;
+	var RBT_joint_width     = RBT_link_width + 1;
+
+
+	var camera, controls, scene, renderer;
+	var target = new Object();
+	var robot_state = new Array(10);
+			
+	initThree();
+	animate();
+
+	var controller = new Leap.Controller();
+	controller.use('playback', {
+	/*recording: 'leap-playback-recording-97fps.json.lz',*/
+	recording: 'slow-leap-playback-recording-43fps.json.lz',
+	autoPlay: false
+	}).use('riggedHand', {
+			parent: scene, 
+			renderFn: function() {renderer.render(scene, camera) }, 
+			offset: new THREE.Vector3(20, 0, 0),
+			scale: 1.5,
+			dotsMode: false,
+			positionScale: 1,
+			
+		}).connect();
+		
+	  var overlay = controller.plugins.playback.player.overlay;
+	  overlay.style.right = 10;
+	  overlay.style.left = 'auto';
+	  overlay.style.top = 'auto';
+	  overlay.style.padding = 0;
+	  overlay.style.bottom = '13px';
+	  overlay.style.width = '180px';
+
+	  controller.on('frame', function(frame) {
+		leapAnimate( frame );
+	  });
+		
+			
+    function initThree() {
+      scene = new THREE.Scene();
+			//scene.background = new THREE.Color( 0xff0000 );
+
+      camera = new THREE.PerspectiveCamera( 75, window.innerWidth / window.innerHeight, 1, 100 );
+      camera.position.z = 10;
+      camera.position.x = 10;
+      camera.position.y = 40;
+	  //camera.position.y = 5;
+      
+      scene.add( camera );
+			camera.up = new THREE.Vector3(0,1,0);
+      camera.lookAt (new THREE.Vector3 (10, 0, -20));
+			camera.aspect = 1.3;
+			camera.updateProjectionMatrix();
+      //camera.rotation.x = Math.PI/2;
+
+      var light = new THREE.PointLight(0xffffff);
+      light.position.set(0,40,10);
+      scene.add(light);
+
+		// FLOOR
+		var floorTexture = new THREE.ImageUtils.loadTexture( 'images/checkerboard.jpg' );
+		floorTexture.wrapS = floorTexture.wrapT = THREE.RepeatWrapping; 
+		floorTexture.repeat.set( 10, 10 );
+		var floorMaterial = new THREE.MeshBasicMaterial( { map: floorTexture, side: THREE.DoubleSide } );
+		var floorGeometry = new THREE.PlaneGeometry(20, 20, 10, 10);
+		var floor = new THREE.Mesh(floorGeometry, floorMaterial);
+		floor.position.y = 0;
+		floor.position.x = 0;
+		floor.position.z = -10;
+		floor.rotation.x = Math.PI / 2;
+		floor.rotation.z = Math.PI / 4;
+		scene.add(floor);
+			
+      // Origin Axis helper
+      RBT_origin_axis = new THREE.AxisHelper( 10 );
+      RBT_origin_axis.position.set( 0, 0, 0 );
+      //scene.add( RBT_origin_axis );
+
+      RBT_material  = new THREE.MeshLambertMaterial({color: 0xEDD9A3});
+      RBT_material1 = new THREE.MeshLambertMaterial({color: 0xE2E8C0});
+      TGT_material  = new THREE.MeshLambertMaterial({color: 0xFF0000});
+
+      // RBT_joint
+      RBT_joint = new THREE.CylinderGeometry( RBT_joint_radius, RBT_joint_radius, RBT_joint_width, 16 );
+      
+      // RBT_base
+      RBT_base = new THREE.CylinderGeometry( RBT_base_radius, RBT_base_radius, RBT_base_height, 16 );
+      RBT_base_mesh = new THREE.Mesh( RBT_base, RBT_material );
+	  RBT_base_mesh.position.y = RBT_base_height/2;
+      //RBT_base_mesh.rotation.set(Math.PI / 2,0,0);
+      RBT_base_joint_mesh = new THREE.Mesh( RBT_joint, RBT_material1 );
+      RBT_base_joint_mesh.rotation.z = Math.PI/2;
+      RBT_base_joint_mesh.position.z = RBT_base_radius;
+      RBT_base_joint_mesh.position.y = RBT_base_height-2.5;
+
+
+      // RBT_arm
+      RBT_arm = new THREE.BoxGeometry( RBT_link_width, RBT_arm_length, RBT_link_thickness );
+      RBT_arm.applyMatrix( new THREE.Matrix4().makeTranslation( 0, RBT_arm_length/2, 0 ) );
+      RBT_arm_mesh = new THREE.Mesh( RBT_arm, RBT_material );
+      RBT_arm_mesh.position.z = RBT_base_radius;
+      RBT_arm_mesh.position.y = RBT_base_height-2.5;
+
+      // RBT_forearm
+      RBT_forearm = new THREE.BoxGeometry( RBT_link_width, RBT_forearm_length, RBT_link_thickness );
+      RBT_forearm.applyMatrix( new THREE.Matrix4().makeTranslation( 0, RBT_forearm_length/2, 0 ) );
+      RBT_forearm_mesh = new THREE.Mesh( RBT_forearm, RBT_material );
+      RBT_forearm_mesh.position.y = RBT_arm_length;
+      RBT_forearm_joint_mesh = new THREE.Mesh( RBT_joint, RBT_material1 );
+      RBT_forearm_joint_mesh.rotation.z = Math.PI/2;
+
+      /*
+      // RBT_wrist
+      RBT_wrist = new THREE.BoxGeometry( RBT_link_width, RBT_wrist_offset, RBT_link_thickness );
+      RBT_wrist.applyMatrix( new THREE.Matrix4().makeTranslation( 0, RBT_wrist_offset/2, 0 ) );
+      RBT_wrist1 = new THREE.BoxGeometry( RBT_link_width, RBT_wrist_length, RBT_link_thickness );
+      RBT_wrist_mesh = new THREE.Mesh( RBT_wrist, RBT_material );
+      RBT_wrist_mesh.rotation.x = Math.PI/2;
+      RBT_wrist_mesh1 = new THREE.Mesh( RBT_wrist1, RBT_material );
+      RBT_wrist_mesh1.rotation.x = Math.PI/2;
+      RBT_wrist_mesh1.position.y = RBT_wrist_offset - RBT_link_thickness/2;
+      RBT_wrist_mesh1.position.z = RBT_wrist_length/2 + RBT_link_thickness/2;
+      RBT_wrist_joint_mesh = new THREE.Mesh( RBT_joint, RBT_material1 );
+      RBT_wrist_joint_mesh.rotation.z = Math.PI/2;
+	*/		
+			// RBT_claw
+			RBT_claw_base =  new THREE.BoxGeometry( RBT_link_width, RBT_claw_base_length, RBT_link_thickness );
+			RBT_claw_base_mesh = new THREE.Mesh( RBT_claw_base, RBT_material );
+			RBT_claw_base_mesh.position.y = RBT_wrist_length / 2 + RBT_claw_base_length/2;
+			
+			//RBT_claw_fingers
+			RBT_finger =  new THREE.BoxGeometry( RBT_finger_width, RBT_finger_length, RBT_link_thickness );
+			RBT_finger1 = new THREE.Mesh( RBT_finger, RBT_material );
+			RBT_finger1.position.y = RBT_finger_length / 2 + RBT_forearm_length/2;
+			RBT_finger2 = new THREE.Mesh( RBT_finger, RBT_material );
+			RBT_finger2.position.y = RBT_finger_length / 2 + RBT_forearm_length/2;
+			
+			RBT_claw_base_mesh.add(RBT_finger1);
+			RBT_claw_base_mesh.add(RBT_finger2);
+			
+			//RBT_wrist_mesh1.add(RBT_claw_base_mesh);
+			
+      //RBT_wrist_mesh.add(RBT_wrist_mesh1);
+      //RBT_wrist_mesh.add(RBT_wrist_joint_mesh);
+      
+      //RBT_wrist_mesh.position.y = RBT_forearm_length; 
+      
+      //RBT_forearm_mesh.add(RBT_wrist_mesh);
+	  RBT_forearm_mesh.add(RBT_claw_base_mesh);
+      RBT_forearm_mesh.add(RBT_forearm_joint_mesh);
+      
+      RBT_arm_mesh.add(RBT_forearm_mesh);
+      RBT_base_mesh.add(RBT_arm_mesh);
+      RBT_base_mesh.add(RBT_base_joint_mesh);
+      
+      scene.add( RBT_base_mesh );
+      
+      TGT = new THREE.SphereGeometry(.5, 20, 20, 6, Math.PI * 2, 0, Math.PI * 2);
+      TGT_mesh = new THREE.Mesh(TGT, TGT_material);
+      //scene.add(TGT_mesh);
+      
+      scene.updateMatrixWorld(true);
+
+
+      renderer = new THREE.WebGLRenderer({antialias:true,alpha: true});
+	  //console.log(document.getElementById('canvas').offsetWidth, document.getElementById('canvas').offsetHeight);
+      renderer.setSize( document.getElementById('canvas').offsetWidth, document.getElementById('canvas').offsetHeight );
+      renderer.setClearColor( 0xffffff, 0);
+
+      
+      container = document.getElementById('canvas');
+     
+      container.appendChild( renderer.domElement );
+      
+      target.position = (0,0,0);
+      target.size = 1;
+
+
+    }
+
+    function animate() {
+
+        requestAnimationFrame( animate );
+        updatePhysics();
+        render();
+    }
+
+    function updatePhysics() {
+      RBT_base_mesh.rotation.y = Math.PI - parseFloat(window.document.getElementById("RBT_base_angle").value);
+      RBT_arm_mesh.rotation.x = window.document.getElementById("RBT_arm_angle").value;
+      RBT_forearm_mesh.rotation.x = Math.PI/4 + parseFloat(window.document.getElementById("RBT_forearm_angle").value)*1.2;
+      //RBT_wrist_mesh.rotation.x = -Math.PI/4 + parseFloat(window.document.getElementById("RBT_wrist_pitch").value);
+			//RBT_claw_base_mesh.rotation.y = parseFloat(window.document.getElementById("RBT_wrist_roll").value);
+			RBT_finger1.position.x = 1.5 - parseFloat(window.document.getElementById("RBT_claw").value)/2.4;
+			RBT_finger2.position.x = -1.5 + parseFloat(window.document.getElementById("RBT_claw").value)/2.4;
+			//RBT_finger2.position.x = - 5 + parseFloat(window.document.getElementById("RBT_claw").value);
+      //TGT_mesh.scale.set(target.size,target.size,target.size);
+    }
+
+    function render() {
+        renderer.render( scene, camera );
+    }
+      
+  
+    function leapAnimate( frame ) {
+      //console.log(frame.hands.length == 1);
+      if(!frame.valid || frame.hands.length != 1 ) {
+        //document.getElementById("hand-led").className += " blink";
+        return;
+      }
+      hand = frame.hands[0];
+      if (hand.timeVisible < .25) return;
+      
+      //document.getElementById("hand-led").className =  document.getElementById("server-led").className.replace ( /(?:^|\s)blink(?!\S)/g , '' );
+      
+			target.size = hand.grabStrength;
+      
+			TGT_mesh.position.x = hand.palmPosition[2]/LEAP_scale-LEAP_offsetX;
+			TGT_mesh.position.y = hand.palmPosition[0]/LEAP_scale;
+			TGT_mesh.position.z = hand.palmPosition[1]/LEAP_scale-LEAP_offsetZ;
+			
+			window.document.getElementById("RBT_arm_angle").value = Math.sqrt(Math.pow(TGT_mesh.position.x,2) + Math.pow(TGT_mesh.position.y,2))/10-2;
+			window.document.getElementById("RBT_forearm_angle").value = -(TGT_mesh.position.z - 25)/8;
+			window.document.getElementById("RBT_base_angle").value = Math.atan2(TGT_mesh.position.y,-TGT_mesh.position.x);
+			window.document.getElementById("RBT_claw").value = target.size*6 - 3;
+
+		}
+
+
+    </script>
+
+    <script src="/js/socket.io.js"></script>
+    <script src="/js/jquery.min.js"></script>
+    <script src="/js/bootstrap.min.js"></script>
+  </body>
+</html>

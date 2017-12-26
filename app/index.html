@@ -1,0 +1,644 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <title>NinJava tool</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+	<link rel="stylesheet" href="css/bootstrap.min.css">
+	<link rel="stylesheet" href="css/custom.css">
+	<script src="js/jquery.min.js"></script>
+	<script src="js/bootstrap.min.js"></script>
+	<link href="css/bootstrap-toggle.min.css" rel="stylesheet">
+	<script src="js/bootstrap-toggle.min.js"></script>
+	<link href= "css/font-awesome.min.css" rel="stylesheet">
+	<script>
+
+		
+	var fs = require('fs');
+		var path = './app';
+		var reloadWatcher=fs.watch(path, function() {
+			serialPort.close(); 
+			location.reload();
+			reloadWatcher.close();
+		});
+	var audio = new Audio('sound/Distorted_Message2.wav');
+	//audio.volume(.5);
+	
+	var SerialPort = require("browser-serialport");
+	var	serialPort = new SerialPort.SerialPort('COM', { baudrate: 115200 }, false);
+	
+	var last_cmd = "";
+	var	last_response = "";
+	var	last_response_buf = "";
+	var local_file_contents;
+	var runninigMidletsList = new Array;
+	var installedMidletsList = [];
+	const CHUNK_SIZE = 1500;
+	var	timeout,t0,t1;
+	var FinishDownload;
+	var IgnoreNextAtError = false;
+
+	const ATDEBUG = false;
+		
+	function delay(t) {
+	   return new Promise(function(resolve) { 
+		   setTimeout(resolve, t)
+	   });
+	}
+
+	function SerialSend(cmd,ignore_error) {
+		if (cmd !== undefined)		// First call
+		{
+			$('#dropdownMenu1').addClass("blink");
+			last_response = "";
+			last_response_buf = "";
+			if ( ATDEBUG ) console.log("Sending "+cmd);
+
+			document.getElementById("pre1").innerHTML += '<span>' + cmd.slice(0, -1) + '</span>';
+			document.getElementById("terminal1").scrollTop = document.getElementById("terminal1").scrollHeight;	 
+			
+			if (ignore_error) IgnoreNextAtError = true;
+			last_cmd = cmd;
+			serialPort.drain();
+			delay(100).then( ()=> {
+				serialPort.write(cmd);
+			});
+			//console.log("Start waiting for response");
+			timeout = 500;
+		}
+
+		return new Promise(function (resolve, reject) {
+			(function waitForResponse() {
+				//console.log("Polling, i=",timeout);
+				if (last_response != "") 
+				{
+					$('#dropdownMenu1').removeClass("blink");
+					if ( ATDEBUG ) console.log("modem response:", last_response);
+					//document.getElementById("pre1").append(last_response);
+					//document.getElementById("pre1").scrollTop = document.getElementById("pre1").scrollHeight;
+
+					var temp = last_response;
+					return resolve(last_response);
+				}
+			if ( !timeout-- ) 
+			{
+				alert("ERROR: Timeout waiting for modem response!");
+				SerialOpen();
+				//reject("Timeout waiting for modem response");
+			}
+			else setTimeout(waitForResponse, 100);
+		})();
+		});
+	}
+
+	var last_port = "";
+	
+	function SerialOpen(port)
+	{
+		if (port === undefined) port = last_port;
+		last_port = port;
+		if(serialPort.isOpen()) 
+		{
+			console.log("Closing open port");
+			serialPort.close();
+		}
+		
+		console.log("Opening " + port);
+		serialPort = new SerialPort.SerialPort(port, { baudrate: 115200 }, false);
+		
+		serialPort.open(function (error) {
+		  if ( error ) {
+			console.log(error.message);
+		  } else {
+			console.log(port + ' opened successfully !');
+			document.getElementById("dropdownMenu1").innerHTML = port + ' <span class="caret"></span>';
+			document.getElementById("dropdownMenu1").setAttribute('class', 'btn btn-default btn-xs dropdown-toggle btn-success');
+			document.getElementById("closeBtn").style.visibility = 'visible';   
+			document.getElementById("dashboard").style.visibility = 'visible';   
+
+			serialPort.drain();
+			serialPort.on('data', function(data) {
+			  if (last_cmd == data) 
+			  {
+				//console.log("Ignoring echo");
+				return; // ignore echo
+			  }
+			  else
+			  {
+				last_response_buf += data ;
+				//console.log("data=",data);
+
+				if (data.includes("CONNECT") || data.includes("OK") || data.includes("ERROR") || data.includes(">"))
+				{
+					last_response = last_response_buf;
+					//console.log("last_response=",last_response);
+					
+					document.getElementById("pre1").innerHTML += last_response;
+					document.getElementById("terminal1").scrollTop = document.getElementById("terminal1").scrollHeight;
+
+
+					if (data.includes("ERROR")) {
+						console.log("modem response:",last_response)
+						if (!IgnoreNextAtError) alert(last_response);
+						IgnoreNextAtError = false;
+					}
+				}
+			  }
+			});
+			
+			SerialSend("AT+CMEE=2\r")
+				.then(()=>{
+			
+				SerialSend("ati1\r")
+					.then((result)=>{
+						//document.getElementById("ati1").innerHTML = result.slice(2).replace(/\r/g,"").replace("\n\nOK\n","").replace(/\n/g,"<br>");
+						temp = result.substring(0,60).slice(2).replace(/\r/g,"").replace("\n\nOK\n","").split("\n")
+						document.getElementById("ati1").innerHTML = temp[0] + '<br>' + temp[1];
+						document.getElementById("ati2").innerHTML = temp[2] + '<br>' + temp[3];
+						RefreshMidletStates();
+					})
+				})
+		  }
+		});
+	}
+	
+	function SerialClose()
+	{
+		serialPort.close();
+		document.getElementById("dropdownMenu1").innerHTML = 'COM <span class="caret"></span>';
+		document.getElementById("dropdownMenu1").setAttribute('class', 'btn btn-default btn-xs dropdown-toggle');
+		document.getElementById("ati1").innerHTML = "No modem";
+		document.getElementById("ati2").innerHTML = "detected";
+		document.getElementById("closeBtn").style.visibility = 'hidden';   
+		document.getElementById("dashboard").style.visibility = 'hidden';   
+	}
+
+	function RefreshMidletStates()
+	{
+		SerialSend("AT^SJAM=5\r")
+		.then( (response)=> {
+			 lines = response.split("\n");
+			 runninigMidletsList = [];
+			 for (var i = 0; i < lines.length; i++) {
+				if (lines[i].startsWith("^SJAM:"))
+				{
+					var midletName = lines[i].replace("^SJAM: ","").replace("a:\/","").replace(/\"/g,"").split(",")[0];
+					//console.log("ra:" +midletName);
+					runninigMidletsList.push(midletName);
+				}
+			}
+			
+			SerialSend("AT^SJAM=4\r")
+			.then( (response)=> {
+				lines = response.split("\n");
+				installedMidletsList = [];
+				
+				var midletList = document.getElementById("midletsList");
+				while (midletsList.firstChild) {
+					midletsList.removeChild(midletList.firstChild);
+				}
+				
+				for (var i = 0; i < lines.length; i++) {
+					if (lines[i].startsWith("^SJAM:"))
+					{
+						var midletName = lines[i].replace("^SJAM: ","").replace("a:\/","").replace(/\"/g,"").split(",")[0];
+						installedMidletsList.push(midletName)
+						tr = document.createElement('tr');
+						td1 = document.createElement('td');
+						td1.innerHTML = '<h6>' + midletName;
+						tr.appendChild(td1);
+						
+						td2 = document.createElement('td');
+						td2.innerHTML = '<h6>' + lines[i].replace("^SJAM: ","").replace(/\"/g,"").split(",")[2];
+						tr.appendChild(td2);
+
+						td3 = document.createElement('td');
+						td3.innerHTML = '<h6>' + lines[i].replace("^SJAM: ","").replace(/\"/g,"").split(",")[3];
+						tr.appendChild(td3);
+
+						td4 = document.createElement('td');
+						td4.innerHTML = '<h6>' + lines[i].replace("^SJAM: ","").replace(/\"/g,"").split(",")[5];
+						tr.appendChild(td4);
+
+						td5 = document.createElement('td');
+						td5.style.width = "145px";
+						checked = (runninigMidletsList.indexOf(midletName) > -1) ? 'checked' : '';
+						//console.log('checked=' + checked);
+						td5.innerHTML = '<input data-width="80" id="toggle' + i + '" type="checkbox" ' + checked 
+						+ ' data-toggle="toggle" data-midlet="' + midletName + '" data-size="mini"  data-on="<i class=\'fa fa-play\'></i> Running" data-off="<i class=\'fa fa-stop\'></i> Stopped">';
+						td5.innerHTML += '<a id="trash' + i + '" ' + (checked ? ' hidden' : '') + ' data-midlet="' + midletName + '" href="#" style="margin-left:15px;"><i class=\'fa fa-trash\'></i></a>';
+						tr.appendChild(td5);
+
+						midletsList.appendChild(tr)
+						$('#toggle'+i).bootstrapToggle();
+						
+						$(function() {
+							$('#toggle' + i).change(function() {
+							  //console.log();
+							  document.getElementById("trash" + $(this).prop('id').slice(-1)).style.visibility = 'hidden';
+							  //console.log('Toggle: ' + midletName + " " + $(this).prop('checked'));
+							  SerialSend("AT^SJAM=" + (($(this).prop('checked')) ? '1' : '2') + 
+										",\"a:/" + $(this).attr('data-midlet') + "\",\"\"\r")
+							  .then ( (result)=>{
+								delay(100).then ( ()=> {
+									RefreshMidletStates();
+								})
+							  })
+							})
+						  })
+
+						  $(function() {
+							$('#trash' + i).click(function() {
+							  SerialSend("AT^SJAM=3,\"a:/" + $(this).attr('data-midlet') + "\",\"\"\r")
+							  .then ( (result)=>{
+								RefreshMidletStates();
+							  })
+							})
+						  })
+					}
+				}
+			}
+			
+			);
+		});
+	}
+	
+	function UploadFileSJDL(file)
+	{
+		$('#jadFileProgress').addClass("active").addClass("progress-bar-striped");
+		t0 = performance.now();
+		local_file_contents = fs.readFileSync(file);
+		fsize = fs.statSync(file).size;
+		
+		return new Promise(function (resolve, reject) {
+			File = file.replace(/.*\\/, '');
+			console.log("Opening " + File + " for writing");
+			
+			SerialSend('AT^SJDL=1,' + fsize +  ',"' + File + '"\r')
+			.then( (result) => {
+				
+				if (result.includes("CONNECT")) // opened successfully
+				{
+					//SerialSend(local_file_contents)
+					SerialSend(local_file_contents)
+					.then(()=>{ 
+						t1 = performance.now();
+						console.log("Finished writing file in ", t1-t0, "ms");
+						$('#jadFileProgress').removeClass("active").removeClass("progress-bar-striped");
+						resolve(); 
+						
+					})
+				}
+			})			
+		});
+
+	}
+	
+	function UploadFile(file)
+	{
+		t0 = performance.now();
+		return new Promise(function (resolve, reject) {
+		    FinishDownload = resolve; 
+
+			jadFile = file.replace(/.*\\/, '');
+			console.log("Opening " + jadFile + " for writing");
+			
+			//SerialSend('AT^SFSA="open","a:/test.bin",10\r')
+			SerialSend('AT^SFSA="open","a:/' + jadFile + '",10\r')
+			.then( (result) => {
+				
+				if (result.includes(",0")) // opened successfully
+				{
+					fh = result.match(/(\d+),/)[1];
+					console.log("fh=" + fh);
+					fsize = fs.statSync(file).size;
+					//fsize = 100;
+					//console.log("fsize=" + fsize);
+					
+					local_file_contents = fs.readFileSync(file);
+					
+					console.log("sizes=", fsize, local_file_contents.length);
+					
+					WriteToFileHandler(fh,local_file_contents.length);
+				}
+			})			
+		});
+	}
+	
+	function WriteToFileHandler (fh, length)
+	{
+		console.log("WriteToFileHandler ",fh,length)
+		if (length > CHUNK_SIZE)
+		{
+			SerialSend('AT^SFSA="write",' + fh + ',' + CHUNK_SIZE + '\r')
+			.then( (result)=> {
+				if (result.includes("CONNECT"))
+				{
+					//console.log('cont1=',local_file_contents);
+					//console.log('cont2=',local_file_contents[0,);
+					SerialSend(local_file_contents.slice(0,CHUNK_SIZE))
+					.then( (result)=> {				
+						local_file_contents = local_file_contents.slice(CHUNK_SIZE,local_file_contents.length);
+						WriteToFileHandler(fh,length - CHUNK_SIZE);
+					})
+				}
+			});
+		}
+		else {
+			SerialSend('AT^SFSA="write",' + fh + ',' + length + '\r')
+			.then( (result)=> {
+				if (result.includes("CONNECT"))
+				{
+					SerialSend(local_file_contents)
+					.then( (result)=> {				
+						SerialSend('AT^SFSA="close",' + fh + '\r')
+						.then(()=>{
+							t1 = performance.now();
+							console.log("Finished writing file in ", t1-t0, "ms");
+							FinishDownload();
+						})
+					})
+				}
+			});
+		}
+	}
+
+	$(document).ready(function(){
+		$('.dropdown').on('show.bs.dropdown', function(){
+			$('#dropdownMenu > li').remove();
+			SerialPort.list(function (err, ports) {
+				ports.forEach(function(port) {
+					$("#dropdownMenu").append('<li><a href="javascript:SerialOpen(\'' + port.comName + '\');">' + port.comName + '</a></li>');
+					//console.log(port.comName,port.pnpId,port.manufacturer);
+				});
+			});
+			//alert('The dropdown is about to be shown.');
+		});
+      });
+	
+		function init() {
+			SerialOpen('COM11');
+			delay(1000).then(()=>{
+				document.getElementById('test_id').click();
+			})
+		}
+
+$(function() {
+
+  window.addEventListener('keydown', function (e) {
+    if ([16,17,18,20,37,38,39,40].includes(e.keyCode)) return; // ignore
+	
+	var code = e.keyCode;
+	
+	if (e.keyCode >= 65  && e.keyCode <= 90) code = e.shiftKey ? e.keyCode : e.keyCode + 32;
+
+	if (e.keyCode == 222 && !e.shiftKey) code = 39; //'
+	if (e.keyCode == 222 && e.shiftKey)  code = 34; //"
+
+	if (e.keyCode == 49  && e.shiftKey)  code = 33; //!
+	if (e.keyCode == 50  && e.shiftKey)  code = 64; //@
+	if (e.keyCode == 51  && e.shiftKey)  code = 35; //#
+	if (e.keyCode == 52  && e.shiftKey)  code = 36; //$
+	if (e.keyCode == 53  && e.shiftKey)  code = 37; //%
+	if (e.keyCode == 54  && e.shiftKey)  code = 94; //^
+	if (e.keyCode == 55  && e.shiftKey)  code = 38; //&
+	if (e.keyCode == 56  && e.shiftKey)  code = 42; //*
+	if (e.keyCode == 57  && e.shiftKey)  code = 40; //(
+	if (e.keyCode == 48  && e.shiftKey)  code = 41; //)
+	if (e.keyCode == 189 && !e.shiftKey) code = 45; //-
+	if (e.keyCode == 189 && e.shiftKey)  code = 95; //_
+	if (e.keyCode == 187 && !e.shiftKey) code = 61; //=
+	if (e.keyCode == 187 && e.shiftKey)  code = 43; //+
+	
+	if (e.keyCode == 190 && !e.shiftKey) code = 46; //.
+	if (e.keyCode == 190 && e.shiftKey)  code = 62; //>
+	if (e.keyCode == 188 && !e.shiftKey) code = 44; //,
+	if (e.keyCode == 188 && e.shiftKey)  code = 60; //<
+	
+	if (e.keyCode == 220 && !e.shiftKey) code = 92; //\
+	if (e.keyCode == 220 && e.shiftKey)  code = 124; //|
+	
+	
+	//console.log(code , String.fromCharCode(code));
+	serialPort.write(String.fromCharCode(code));
+	
+	if (e.keyCode == 13) { SerialSend("") }
+	else 
+		if (e.keyCode == 8 ) // backspace
+			document.getElementById("pre1").innerHTML = document.getElementById("pre1").innerHTML.slice(0,-14);
+		else document.getElementById("pre1").innerHTML += '<span>' + String.fromCharCode(code) + '</span>';
+	document.getElementById("terminal1").scrollTop = document.getElementById("terminal1").scrollHeight;
+
+});
+
+  $(document).on('change', ':file', function() {
+    var input = $(this);
+		var FullPath = input.val();
+		var OverwriteWatcher=fs.watch(FullPath, function() {
+			if (document.getElementById("watchcb").checked)
+			{
+				Upload(FullPath)
+			}
+		});
+
+		Upload(FullPath)
+		
+
+  });
+});
+
+function Upload (file)
+{
+	label = file.replace(/\\/g, '/').replace(/.*\//, '');
+	document.getElementById('jadFile').innerHTML = label;
+	document.getElementById('FileInput').value = "";
+	if (label.substring(label.length-4) == ".jad") document.getElementById("step1").style.visibility = "visible";
+	UploadFileSJDL(file).then(()=>{
+		document.getElementById("step1").style.visibility = "hidden";
+		if ((label.substring(label.length-4) == ".jad") && document.getElementById("step2cb").checked ) {
+			document.getElementById("step2").style.visibility = "visible";
+			UploadFileSJDL(file.substring(0,file.length-4)+".jar")
+			.then(()=>{
+				document.getElementById("step2").style.visibility = "hidden";
+				if (document.getElementById("step3cb").checked) {	// Stop midlet
+					document.getElementById("step3").style.visibility = "visible";
+					SerialSend('AT^SJAM=2,"a:/' + label + '",""\r',true) // Ignore error
+					.then(()=>{
+					document.getElementById("step3").style.visibility = "hidden";
+					if (document.getElementById("step4cb").checked) {	// Install midlet
+						document.getElementById("step4").style.visibility = "visible";
+						SerialSend('AT^SJAM=0,"a:/' + label + '",""\r')
+						.then(()=>{
+						document.getElementById("step4").style.visibility = "hidden";
+						if (document.getElementById("step5cb").checked) {	// Run midlet
+							document.getElementById("step5").style.visibility = "visible";
+							SerialSend('AT^SJAM=1,"a:/' + label + '",""\r')
+							.then(()=>{
+								document.getElementById("step5").style.visibility = "hidden";
+								if (document.getElementById("step6cb").checked) {
+									document.getElementById("step6").style.visibility = "visible";
+									audio.play();
+									setTimeout( function () {document.getElementById("step6").style.visibility = "hidden";}, 300);
+								}
+							})
+						}
+						})
+					}
+					})
+				}
+			}) 
+		}
+	})
+}
+    </script>
+  </head>
+  <body onload="init();">
+  
+  
+  <nav class="navbar navbar-default" style="margin-bottom:0px;">
+  <div class="container-fluid">
+
+    <!-- Collect the nav links, forms, and other content for toggling -->
+      <div class="row">
+        <div  style="display: table-cell;">
+          <div class="dropdown" style="padding:16px;">
+		  <button style="width:80px;" class="btn btn-default btn-xs dropdown-toggle" type="button" id="dropdownMenu1" data-toggle="dropdown" aria-haspopup="true" aria-expanded="true">
+			COM port <span class="caret"></span>
+		  </button>
+		  <ul class="dropdown-menu" aria-labelledby="dropdownMenu1" id="dropdownMenu">
+		  </ul>
+		  </div>
+        </div>
+        <div style="display: table-cell; padding:16px;"><button class="btn btn-xs btn-default" id="closeBtn" onClick="SerialClose();">Close</button></div>
+        <!--
+		<div style="display: table-cell; padding:12px;"><button class="btn btn-default btn-sm" onclick="SerialSendAT();">AT</button></div>
+        <div style="display: table-cell; padding:12px;"><button class="btn btn-default btn-sm" onclick="SerialSendATi1();">ATi1</button></div>
+		-->
+		<div style="display: table-cell; width:80px;"></div>
+		<div style="display: table-cell; vertical-align: middle;"><h6><span id="ati1" class="">No modem</span></h6></div>
+		<div style="display: table-cell; vertical-align: middle; padding-left:8px;"><h6><span id="ati2" class="">Detected</span></h6></div>
+      </div>
+  </div><!-- /.container-fluid -->
+</nav>
+
+<div id="dashboard" class="container" style="visibility:hidden;padding:0px;">
+      <div class="tabbable tabs-below"> 
+        <div class="tab-content" style="height:296px;padding:0px;">
+         <div class="tab-pane active" id="one_" style="padding:10px;">
+		 <table class="table">
+		  <thead>
+			<tr>
+			  <th scope="col">Midlet Name</th>
+			  <th scope="col">Vendor</th>
+			  <th scope="col">ver.</th>
+			  <th scope="col">size</th>
+			  <!-- <th scope="col">Autostart</th> -->
+			  <th scope="col" style="min-width:120px">Controls &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<a href="javascript:RefreshMidletStates();"><i class='fa fa-refresh'></i></a></th>
+			</tr>
+		  </thead>
+		  <tbody id="midletsList">
+		  </tbody>
+		</table>
+		</div>
+        <div class="tab-pane" id="two_" style="padding:10px;">
+		
+			<table style="margin:0px;" width="100%">
+			<tr>
+				<td valign="top" style="padding-right:10px;">
+					<div class="panel panel-default">
+					  <div class="panel-heading" align="center">
+						<label class="btn btn-primary btn-xs">
+							Select file to upload&hellip; <input id="FileInput" type="file" style="display: none;">
+						</label>
+					  </div>
+					  <div class="panel-body" style="padding-bottom:0px;">
+						<table>
+							<tbody>
+								<tr>
+									<td valign="top" width="150" id="jadFile">No file selected</td>
+									<td>
+									<div class="progress">
+									  <div id="jadFileProgress" class="progress-bar " role="progressbar" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100" style="width: 100px;">
+									  </div>
+									</div>
+									</td>
+								</tr>
+							</tbody>
+						</table>
+					  </div>
+ 					  <div class="panel-footer" align="center">
+						  <table>
+							<tr>
+								<td style="padding-right:10px;"><input id="watchcb" checked type="checkbox"></td>
+								<td>Trigger upload when local file changes</td>
+							</tr>
+						</table>
+					  </div>
+
+				</td>
+				<td valign="top">
+					<div class="panel panel-default">
+					  <div class="panel-heading"><b>If .jad selected:</b></div>
+					  <div class="panel-body">
+						<table >
+							<tbody>
+								<tr>
+									<td style="visibility:hidden"><input id="step1cb" checked type="checkbox"></td>
+									<td>Upload .jad</td>
+									<td><i style="visibility:hidden;" id="step1" class='fa fa-coffee'></i></td>
+								</tr>
+								<tr>
+									<td style="padding-right:10px;"><input id="step2cb" checked type="checkbox"></td>
+									<td>Upload .jar as well &nbsp;</td>
+									<td><i style="visibility:hidden;" id="step2" class='fa fa-coffee'></i></td>
+
+								</tr>
+								<tr>
+									<td style="padding-right:10px;"><input id="step3cb" checked type="checkbox"></td>
+									<td>Stop old midlet</td>
+									<td><i style="visibility:hidden;" id="step3" class='fa fa-coffee'></i></td>
+
+								</tr>
+								<tr>
+									<td><input id="step4cb" checked type="checkbox"></td>
+									<td>Install new midlet</td>
+									<td><i style="visibility:hidden;" id="step4" class='fa fa-coffee'></i></td>
+								</tr>
+								<tr>
+									<td><input id="step5cb" checked type="checkbox"></td>
+									<td>Run</td>
+									<td><i style="visibility:hidden;" id="step5" class='fa fa-coffee'></i></td>
+								</tr>
+								<tr>
+									<td><input id="step6cb" checked type="checkbox"></td>
+									<td>Beep</td>
+									<td><i style="visibility:hidden;" id="step6" class='fa fa-coffee'></i></td>
+								</tr>
+							</tbody>
+						</table>
+					  </div>
+					</div>
+				</td>
+			</tr>
+			</table>
+            
+
+		</div>
+         <div class="tab-pane" id="twee_" style="height:100%;padding:0px;">
+			<pre class="terminal" id="terminal1">
+				<span id="pre1" style="color:grey;"></span><b class="cursor" id="cursor">B</b>
+			</pre>
+		 </div>
+        </div>
+        <ul class="nav nav-tabs" >
+          <li><a href="#one_" data-toggle="tab">Manage</a></li>
+          <li><a href="#two_" data-toggle="tab" id="test_id">Upload</a></li>
+          <li><a href="#twee_" data-toggle="tab" onClick='javascript:document.getElementById("terminal1").scrollTop=document.getElementById("terminal1").scrollHeight'>Terminal</a></li>
+        </ul>
+      </div>
+</div>
+
+	
+  </body>
+  
+</html>
