@@ -54,7 +54,8 @@
 			last_response_buf = "";
 			if ( ATDEBUG ) console.log("Sending "+cmd);
 
-			document.getElementById("pre1").innerHTML += '<span>' + cmd.slice(0, -1) + '</span>';
+			var textForTerminal = cmd.length < 100 ? cmd.slice(0, -1) : cmd.slice(0,50) + "...";
+			document.getElementById("pre1").innerHTML += '<span>' + textForTerminal + '</span>';
 			document.getElementById("terminal1").scrollTop = document.getElementById("terminal1").scrollHeight;	 
 			
 			if (ignore_error) IgnoreNextAtError = true;
@@ -138,7 +139,7 @@
 
 
 					if (data.includes("ERROR")) {
-						console.log("modem response:",last_response)
+						if ( ATDEBUG ) console.log("modem response:",last_response)
 						if (!IgnoreNextAtError) alert(last_response);
 						IgnoreNextAtError = false;
 					}
