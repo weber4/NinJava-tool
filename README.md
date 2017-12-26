@@ -9,13 +9,13 @@ This tool should help you develop and manage Java midlets on Cinterion cellular 
 
 
 ### Installation
-Download and unzip NinJava tool project files to your machine 
-Download NW.js framework for your host OS - https://nwjs.io/downloads/ (SDK version comes with developer tools)
+Download and unzip NinJava tool project files to your machine <br>
+Download NW.js framework for your host OS - https://nwjs.io/downloads/ (SDK version comes with developer tools)<br>
 
 ### Run from command line / create link in windows:
 NW.exe expects to receive a path to folder containing package.json file.<br>
 Example: `"C:\My projects\nwjs-sdk-v0.26.6-win-x64\nw.exe" "C:\My projects\JavaTool"`
-
+<br>
 ### Credits:
 [NW.js](https://nwjs.io/)<br>
 [Bootstrap](http://getbootstrap.com/)<br>
