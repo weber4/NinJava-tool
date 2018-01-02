@@ -413,6 +413,10 @@ $(function() {
 	
 	if (e.keyCode == 190 && !e.shiftKey) code = 46; //.
 	if (e.keyCode == 190 && e.shiftKey)  code = 62; //>
+
+	if (e.keyCode == 191 && !e.shiftKey) code = 47; ///
+	if (e.keyCode == 191 && e.shiftKey)  code = 63; //>
+
 	if (e.keyCode == 188 && !e.shiftKey) code = 44; //,
 	if (e.keyCode == 188 && e.shiftKey)  code = 60; //<
 	
@@ -420,7 +424,7 @@ $(function() {
 	if (e.keyCode == 220 && e.shiftKey)  code = 124; //|
 	
 	
-	//console.log(code , String.fromCharCode(code));
+	console.log(code , String.fromCharCode(code));
 	serialPort.write(String.fromCharCode(code));
 	
 	if (e.keyCode == 13) { SerialSend("") }
@@ -524,7 +528,7 @@ function Upload (file)
 
 <div id="dashboard" class="container" style="visibility:hidden;padding:0px;">
       <div class="tabbable tabs-below"> 
-        <div class="tab-content" style="height:296px;padding:0px;">
+        <div class="tab-content" style="height:296px; padding:0px; overflow-y: auto; overflow-x: hidden;;">
          <div class="tab-pane active" id="one_" style="padding:10px;">
 		 <table class="table">
 		  <thead>
