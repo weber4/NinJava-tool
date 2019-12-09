@@ -369,7 +369,7 @@
 			$('#dropdownMenu > li').remove();
 			SerialPort.list(function (err, ports) {
 				ports.forEach(function(port) {
-					$("#dropdownMenu").append('<li><a href="javascript:SerialOpen(\'' + port.comName + '\');">' + port.comName + '</a></li>');
+					$("#dropdownMenu").append('<li><a href="javascript:SerialOpen(\'' + port.comName.replace(/\\/g, "\\\\") + '\');">' + port.comName + '</a></li>');
 					//console.log(port.comName,port.pnpId,port.manufacturer);
 				});
 			});
