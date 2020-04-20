@@ -1,9 +1,11 @@
 {
   "name": "NinJava tools",
-  "main": "app/index.html",
+  "main": "app/index2.html",
   "window": {
     "width": 600,
-    "height": 400,
+	"min_width": 600,
+	"height": 400,
+	"min_height": 400,
 	"icon": "app/images/NinJava.png"
   },
   "dependencies": {
