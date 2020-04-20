@@ -15,8 +15,10 @@
 
 		
 	var fs = require('fs');
-		var path = './app';
-		var reloadWatcher=fs.watch(path, function() {
+	var path = './app';
+	var device_path = 'a:/';
+	var device_family = '';
+	var reloadWatcher=fs.watch(path, function() {
 			serialPort.close(); 
 			location.reload();
 			reloadWatcher.close();
@@ -65,18 +67,17 @@
 				serialPort.write(cmd);
 			});
 			//console.log("Start waiting for response");
-			timeout = 500;
+			timeout = 2000;
 		}
 
 		return new Promise(function (resolve, reject) {
 			(function waitForResponse() {
-				//console.log("Polling, i=",timeout);
 				if (last_response != "") 
 				{
 					$('#dropdownMenu1').removeClass("blink");
 					if ( ATDEBUG ) console.log("modem response:", last_response);
-					//document.getElementById("pre1").append(last_response);
-					//document.getElementById("pre1").scrollTop = document.getElementById("pre1").scrollHeight;
+					
+					document.getElementById("terminal1").scrollTop = document.getElementById("terminal1").scrollHeight;
 
 					var temp = last_response;
 					return resolve(last_response);
@@ -93,6 +94,103 @@
 	}
 
 	var last_port = "";
+	
+	function ChangeDeviceDir(path)
+	{
+		device_path = path;
+		console.log(path);
+
+		var breadcrumblist = document.getElementById("breadcrumb");
+		while (breadcrumblist.firstChild) {
+			breadcrumblist.removeChild(breadcrumblist.firstChild);
+		}
+
+		list = device_path.split("/")
+		console.log(list);
+		
+		index = 0; 
+		tpath = "";
+		while (index < list.length) { 
+			console.log(tpath);
+			folder = document.createElement('li');
+			folder.innerHTML = '<a href="javascript:ChangeDeviceDir(\'' + tpath + list[index] + '\')">' + list[index] + '</a>';
+			tpath += list[index] + "/";
+			breadcrumblist.appendChild(folder);
+			index++; 
+		}
+
+		//filename_el = document.createElement('li');
+		//filename_el.setAttribute("id", "filenameinput");
+		//filename_el.innerHTML = '<input type="text" class="form-control input-sm" placeholder="file/folder" size=10 style="display:inline;width:100px;">';
+		//breadcrumblist.appendChild(filename_el);
+
+
+
+		SerialSend('AT^SFSA="ls","' + path + '/"\r', true)
+		.then((lsresult)=>{
+			if (lsresult.includes("ERROR"))
+			{
+				// This is a file, try to read it
+				if (device_family == 'EXS') read_flag = '2'
+				else read_flag = '2';
+				
+				SerialSend('AT^SFSA="open","' + path + '",' + read_flag + '\r', true)
+				.then((opresult)=>{
+					match = opresult.match(/(\d+), ?0/m);
+					if (match)
+					{
+						fh = match[1];
+						document.getElementById("contents").value = "";
+						SerialSend('AT^SFSA="read",' + fh + ',1000\r', true)
+						.then((reresult)=>{
+							index = 0; 
+							list = reresult.split("\r\n")
+							while (index < list.length) { 
+								console.log("line=" + list[index])
+								match = list[index].match(/^\^SFSA: (\d+),/)
+								index++; 
+								if (match)
+								{
+									for (i=index;i<list.length-2;i++)
+									document.getElementById("contents").value += list[i] + '\r\n';
+								}
+							}
+							SerialSend('AT^SFSA="close",' + fh + '\r', true);
+						})
+					}
+				})
+				return;
+			}
+			list = lsresult.split("\r\n")
+			//console.log(list);
+			index = 0; 
+
+			var filelist = document.getElementById("filelist");
+			while (filelist.firstChild) {
+				filelist.removeChild(filelist.firstChild);
+			}
+
+			filec = document.createElement('li');
+			filec.classList.add("list-group-item");
+			filec.innerHTML = '<a href="javascript:ChangeDeviceDir(\'' + device_path + '/..\')">..</a>';
+			filelist.appendChild(filec);
+			
+			while (index < list.length) { 
+				//console.log("line=" + list[index])
+				match = list[index].match(/^\^SFSA: "?((\w|\.)+)"?/)
+				index++; 
+				if (match)
+				{
+					if (match[1] == "0") continue;
+					filec = document.createElement('li');
+					filec.classList.add("list-group-item");
+					filec.innerHTML = '<a href="javascript:ChangeDeviceDir(\'' + device_path + '/' + match[1] + '\')">' + match[1] + '</a>';
+					filelist.appendChild(filec);
+			
+				}
+			}
+		})
+	}
 	
 	function SerialOpen(port)
 	{
@@ -147,16 +245,30 @@
 			  }
 			});
 			
-			SerialSend("AT+CMEE=2\r")
+			SerialSend("AT+CMEE=2;E0\r")  // verbose ERROR + no Echo 
 				.then(()=>{
 			
 				SerialSend("ati1\r")
 					.then((result)=>{
+						match = result.match(/(EXS|TX|EHS|ELS|PLS)/);
+						device_family = match[1];
+
 						//document.getElementById("ati1").innerHTML = result.slice(2).replace(/\r/g,"").replace("\n\nOK\n","").replace(/\n/g,"<br>");
 						temp = result.substring(0,60).slice(2).replace(/\r/g,"").replace("\n\nOK\n","").split("\n")
 						document.getElementById("ati1").innerHTML = temp[0] + '<br>' + temp[1];
 						document.getElementById("ati2").innerHTML = temp[2] + '<br>' + temp[3];
-						RefreshMidletStates();
+						
+						if (device_family == 'EXS') 
+						{
+							$('#tabmidlets').hide();
+							$('#tabupload').hide();
+							$('#tabstdout').hide();
+							$('#filemanager_').addClass("active")
+							
+						}
+						else RefreshMidletStates();
+						
+						ChangeDeviceDir("a:");
 					})
 				})
 		  }
@@ -377,17 +489,14 @@
 		});
       });
 	
-		function init() {
-			/*SerialOpen('COM11');
-			delay(1000).then(()=>{
-				document.getElementById('test_id').click();
-			})*/
-		}
-
 $(function() {
 
   window.addEventListener('keydown', function (e) {
+  
+	if (!$('#terminal_').hasClass('active')) return;
+	if (serialPort.connectionId == -1) return;
     if ([16,17,18,20,37,38,39,40].includes(e.keyCode)) return; // ignore
+	
 	
 	var code = e.keyCode;
 	
@@ -442,7 +551,7 @@ $(function() {
 		var OverwriteWatcher=fs.watch(FullPath, function() {
 			if (document.getElementById("watchcb").checked)
 			{
-				Upload(FullPath)
+				setTimeout( function () { Upload(FullPath); }, 2000);
 			}
 		});
 
@@ -497,10 +606,10 @@ function Upload (file)
 }
     </script>
   </head>
-  <body onload="init();">
+  <body style="min-height:100vh;">
   
   
-  <nav class="navbar navbar-default" style="margin-bottom:0px;">
+  <nav class="navbar navbar-default navbar-fixed-top" style="margin-bottom:0px;">
   <div class="container-fluid">
 
     <!-- Collect the nav links, forms, and other content for toggling -->
@@ -515,10 +624,6 @@ function Upload (file)
 		  </div>
         </div>
         <div style="display: table-cell; padding:16px;"><button class="btn btn-xs btn-default" id="closeBtn" onClick="SerialClose();">Close</button></div>
-        <!--
-		<div style="display: table-cell; padding:12px;"><button class="btn btn-default btn-sm" onclick="SerialSendAT();">AT</button></div>
-        <div style="display: table-cell; padding:12px;"><button class="btn btn-default btn-sm" onclick="SerialSendATi1();">ATi1</button></div>
-		-->
 		<div style="display: table-cell; width:80px;"></div>
 		<div style="display: table-cell; vertical-align: middle;"><h6><span id="ati1" class="">No modem</span></h6></div>
 		<div style="display: table-cell; vertical-align: middle; padding-left:8px;"><h6><span id="ati2" class="">Detected</span></h6></div>
@@ -529,7 +634,7 @@ function Upload (file)
 <div id="dashboard" class="container" style="visibility:hidden;padding:0px;">
       <div class="tabbable tabs-below"> 
         <div class="tab-content" style="height:296px; padding:0px; overflow-y: auto; overflow-x: hidden;;">
-         <div class="tab-pane active" id="one_" style="padding:10px;">
+         <div class="tab-pane" id="midlets_" style="padding:10px;">
 		 <table class="table">
 		  <thead>
 			<tr>
@@ -545,7 +650,7 @@ function Upload (file)
 		  </tbody>
 		</table>
 		</div>
-        <div class="tab-pane" id="two_" style="padding:10px;">
+        <div class="tab-pane" id="upload_" style="padding:10px;">
 		
 			<table style="margin:0px;" width="100%">
 			<tr>
@@ -629,16 +734,60 @@ function Upload (file)
             
 
 		</div>
-         <div class="tab-pane" id="twee_" style="height:100%;padding:0px;">
+        <div class="tab-pane" id="filemanager_" style="height:100%;padding:0px;">
+			<div class="nav-container" style="position:relative;">
+				<ol class="breadcrumb" id="breadcrumb">
+				</ol>
+				<div class="btn-group" role="group" aria-label="Basic example" style="position:absolute;right:1rem;top:50%;transform:translateY(-50%);">
+				  <button type="button" class="btn btn-default btn-sm" data-toggle="tooltip" data-placement="top" title="Save"><span class="glyphicon glyphicon-save"></span></button>
+				  <button type="button" class="btn btn-default btn-sm" data-toggle="tooltip" data-placement="top" title="Create File"><span class="glyphicon glyphicon-plus"></span></button>
+				  <button type="button" class="btn btn-default btn-sm" data-toggle="tooltip" data-placement="top" title="Create Folder"><span class="glyphicon glyphicon-folder-open"></span></button>
+				  <button type="button" class="btn btn-default btn-sm" data-toggle="tooltip" data-placement="top" title="Delete"><span class="glyphicon glyphicon-trash"></span></button>
+				</div>
+			</div>
+			<div class="container">
+			<div class="row">
+				<div class="col-xs-3" style="max-height:210px;overflow-y: auto">
+					<ul class="list-group" id="filelist"></ul>
+				</div>
+				<div class="col-xs-9"><textarea class="form-control" rows="10" id="contents"></textarea></div>
+			</div>
+			</div>
+		 </div>
+         <div class="tab-pane" id="terminal_" style="height:100%;padding:0px;">
 			<pre class="terminal" id="terminal1">
 				<span id="pre1" style="color:grey;"></span><b class="cursor" id="cursor">B</b>
 			</pre>
 		 </div>
+         <div class="tab-pane" id="stdout_" style="height:100%;padding:0px;">
+			
+			<div class="btn-group">
+			  <button type="button" class="btn btn-default dropdown-toggle" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+				Action <span class="caret"></span>
+			  </button>
+			  <ul class="dropdown-menu">
+				<li><a href="#">NULL</a></li>
+				<li><a href="#">ASC0</a></li>
+				<li><a href="#">ASC1</a></li>
+				<li role="separator" class="divider"></li>
+				<li><a href="#">USB</a></li>
+				<li><a href="#">USB0</a></li>
+				<li><a href="#">USB1</a></li>
+				<li><a href="#">USB2</a></li>
+				<li><a href="#">USB3</a></li>
+				<li><a href="#">USB4</a></li>
+				<li><a href="#">USB5</a></li>
+			  </ul>
+			</div>
+
+		 </div>
         </div>
-        <ul class="nav nav-tabs" >
-          <li><a href="#one_" data-toggle="tab">Manage</a></li>
-          <li><a href="#two_" data-toggle="tab" id="test_id">Upload</a></li>
-          <li><a href="#twee_" data-toggle="tab" onClick='javascript:document.getElementById("terminal1").scrollTop=document.getElementById("terminal1").scrollHeight'>Terminal</a></li>
+        <ul class="nav nav-tabs navbar-fixed-bottom" >
+          <li id="tabmidlets"><a href="#midlets_" data-toggle="tab">Midlets</a></li>
+          <li id="tabupload"><a href="#upload_" data-toggle="tab">Upload</a></li>
+          <li id="tabfilemanager"><a href="#filemanager_" data-toggle="tab">File Manager</a></li>
+          <li id="tabterminal"><a href="#terminal_" data-toggle="tab" onClick='setTimeout(function(){ document.getElementById("terminal1").scrollTop = document.getElementById("terminal1").scrollHeight},1);'>Terminal</a></li>
+          <li id="tabstdout"><a href="#stdout_" data-toggle="tab">StdOut</a></li>
         </ul>
       </div>
 </div>
