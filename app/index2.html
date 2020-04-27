@@ -28,6 +28,7 @@
 			serialPort.close(); 
 			MonitorPort.close();
 			setTimeout( window.location.reload() ,100);
+			setTimeout( location.reload() ,200);
 			reloadWatcher.close();
 		});
 	var audio = new Audio('sound/Distorted_Message2.wav');
@@ -108,8 +109,13 @@
 	
 	function ChangeDeviceDir(path)
 	{
+		document.getElementById("contents").value = "";
+
 		device_path = path.replace(/\/$/g,"");
-		console.log("Change Device Dir " + path);
+		if (device_path == "a:") device_path = "a:/";
+		device_path = device_path.replace(/\/\//g,"/");
+
+		console.log("Change Device Dir " + device_path);
 		
 		$('.fe_btn').hide();
 
@@ -135,7 +141,7 @@
 			index++; 
 		}
 
-		SerialSend('AT^SFSA="stat","' + device_path + '/' + '"\r', true)
+		SerialSend('AT^SFSA="stat","' + device_path + '' + '"\r', true)
 		.then((statresult)=>{
 
 	
@@ -147,20 +153,23 @@
 				filelist.removeChild(filelist.firstChild);
 			}
 
-			if (device_family == 'EXS') {
-				filec = document.createElement('li');
-				filec.classList.add("list-group-item");
-				filec.innerHTML = '<a href="javascript:ChangeDeviceDir(\'' + device_path + '../\')">..</a>';
-				filelist.appendChild(filec);
-			}
-	
+			var filesize = statresult.split("\n")[1].match(/\d+/g)
 			//console.log(statresult.split("\n")[5].match(/\d+/g));
 			if  (statresult.split("\n")[5].match(/\d+/g) == "16") // Folder
 			{
+
+				/*if (device_family == 'EXS') {
+					filec = document.createElement('li');
+					filec.classList.add("list-group-item");
+					filec.innerHTML = '<a href="javascript:ChangeDeviceDir(\'' + device_path + '/../\')">..</a>';
+					filelist.appendChild(filec);
+				}*/
+		
 				$('#fe_create').show();
-				if (path != "a:/") $('#fe_delete').show();
+				$('#fe_upload').show();
+				if (device_path != "a:/") $('#fe_rmdir').show();
 				
-				SerialSend('AT^SFSA="ls","' + path + '"\r', true)
+				SerialSend('AT^SFSA="ls","' + device_path + '"\r', true)
 				.then((lsresult)=>{
 				
 					list = lsresult.split("\r\n")				
@@ -186,43 +195,41 @@
 			else // File
 			
 			{
-				if (path.endsWith(".bin/") && ["EXS","TX"].includes(device_family) )
+				$('#fe_rmfile').show();
+
+				if (device_path.endsWith(".bin") && ["EXS","TX"].includes(device_family) )
 				{
 					$('#fe_run').show();
 					$('#fe_stop').show();
+					document.getElementById("contents").value = "\n\n         This is a binary file";
 				}
-				$('#fe_delete').show();
-
-				// This is a file, try to read it
-				if (device_family == 'EXS') read_flag  = '2'
-				else read_flag = '8';
-				
-				SerialSend('AT^SFSA="open","' + path + '",' + read_flag + '\r', true)
-				.then((opresult)=>{
-					match = opresult.match(/(\d+), ?0/m);
-					if (match)
-					{
-						fh = match[1];
-						document.getElementById("contents").value = "";
-						SerialSend('AT^SFSA="read",' + fh + ',1000\r', true)
-						.then((reresult)=>{
-							index = 0; 
-							list = reresult.split("\r\n")
-							while (index < list.length) { 
-								//console.log("line=" + list[index])
-								match = list[index].match(/^\^SFSA: (\d+),/)
-								index++; 
-								if (match)
+				else
+				{
+					// This is a file, try to read it
+					if (device_family == 'EXS') read_flag  = '2'
+					else read_flag = '8';
+					
+					SerialSend('AT^SFSA="open","' + device_path + '",' + read_flag + '\r', true)
+					.then((opresult)=>{
+						match = opresult.match(/(\d+), ?0/m);
+						if (match)
+						{
+							fh = match[1];
+							document.getElementById("contents").value = "";
+							SerialSend('AT^SFSA="read",' + fh + ',' + filesize + '\r', true)
+							.then((reresult)=>{
+								list = reresult.split("\r\n")
+								console.log(list);
+								for (i=0;i<list.length-5;i++)
 								{
-									for (i=index;i<list.length-2;i++)
 									document.getElementById("contents").value += list[i] + '\r\n';
-									console.log(list[i]);								
+									//console.log("line="+list[i]);								
 								}
-							}
-							SerialSend('AT^SFSA="close",' + fh + '\r', true);
-						})
-					}
-				})
+								SerialSend('AT^SFSA="close",' + fh + '\r', true);
+							})
+						}
+					})
+				}
 			}
 		})
 	}
@@ -286,17 +293,12 @@
 
 			serialPort.drain();
 			serialPort.on('data', function(data) {
-			  if (last_cmd == data) 
-			  {
-				//console.log("Ignoring echo");
-				return; // ignore echo
-			  }
-			  else
-			  {
 				last_response_buf += data ;
-				//console.log("data=",data);
+				//console.log("data="+data);
+				//console.log("type=", typeof (data));
+				
 
-				if (data.includes("CONNECT") || data.includes("OK") || data.includes("ERROR") || data.includes(">"))
+				if (data.includes("CONNECT") || data.includes("\r\nOK") || data.includes("ERROR") || data.includes("\r\n>") || data.includes("\r\n^SUSRW"))
 				{
 					last_response = last_response_buf;
 					//console.log("last_response=",last_response);
@@ -310,8 +312,10 @@
 						if (!IgnoreNextAtError) alert(last_response);
 						IgnoreNextAtError = false;
 					}
+				
+					last_response_buf = "";
 				}
-			  }
+				
 			});
 			
 			SerialSend("AT+CMEE=2;E0\r")  // verbose ERROR + no Echo 
@@ -577,7 +581,8 @@
 $(function() {
 
   window.addEventListener('keydown', function (e) {
-  
+
+	if (document.activeElement != document.body) return;
 	if (document.getElementById("collapseTerminal").classList.contains('collapsed')) return;
 	if (serialPort.connectionId == -1) return;
     if ([16,17,18,20,37,38,39,40].includes(e.keyCode)) return; // ignore
@@ -662,23 +667,76 @@ $(function() {
 
 });
 
-  $(document).on('change', ':file', function() {
-    var input = $(this);
-		var FullPath = input.val();
-		var OverwriteWatcher=fs.watch(FullPath, function() {
-			if (document.getElementById("watchcb").checked)
-			{
-				setTimeout( function () { Upload(FullPath); }, 2000);
-			}
-		});
+  $('#inputGroupFile01').on('change', function(e) {
+	$('#inputGroupFile01')[0].labels[0].innerHTML = $('#inputGroupFile01')[0].value.replace(/\\/g, '/').replace(/.*\//, '');
+	});
 
-		Upload(FullPath)
-		
+  $('#FileInput').on('change', function(e) {
 
+	var input = $(this);
+	var FullPath = input.val();
+	
+			var OverwriteWatcher=fs.watch(FullPath, function() {
+				if (document.getElementById("watchcb").checked)
+				{
+					setTimeout( function () { Upload(FullPath); }, 2000);
+				}
+			});
+
+			Upload(FullPath)
   });
+  
 });
 
-function Upload (file)
+function UploadBin(file)
+{
+	console.log("uploading bin file:" + file);
+
+	local_file_contents = fs.readFileSync(file);
+	fsize = fs.statSync(file).size;
+	t0 = performance.now();
+	return new Promise(function (resolve, reject) {
+		File = file.replace(/.*\\/, '');
+		console.log("Removing old file " + File);
+		SerialSend('AT^SFSA="remove","' + device_path + '/' + File + '"\r', true)
+		.then( () => {
+		
+			console.log("Opening " + File + " for writing");
+			SerialSend('AT^SFSA="open","' + device_path + '/' + File + '",9\r', true)
+			.then( (opresult) => {
+						
+				match = opresult.match(/(\d+), ?0/m);
+				if (match)
+				{
+					fh = match[1];
+					SerialSend('AT^SFSA="write",' + fh + ',' + fsize + '\r')
+					.then ( (result) => {
+					
+						if (result.includes("CONNECT")) // opened successfully
+						{
+							SerialSend(local_file_contents)
+							.then(()=>{ 
+								SerialSend('AT^SFSA="close",' + fh + '\r')
+								.then( () => {
+									t1 = performance.now();
+									console.log("Finished writing file in ", t1-t0, "ms");
+									ChangeDeviceDir(device_path);
+									$('#UploadFileModal').modal('hide');
+									resolve(); 
+								});
+							});
+						}
+					
+					
+					})
+				}
+			});
+		});			
+	});
+
+}
+
+function Upload(file)
 {
 	label = file.replace(/\\/g, '/').replace(/.*\//, '');
 	document.getElementById('jadFile').innerHTML = label;
@@ -726,8 +784,12 @@ function NetworkRefresh() {
 	if (!$('#collapseNetwork').hasClass('show')) return;
 	SerialSend('AT^SMONI\r').then( (result)=> {
 		document.getElementById("SMONI").value = result.slice(10,-6)
-		SerialSend('AT+COPS?\r').then ( (result)=> { 
-			document.getElementById("COPS").value = result.slice(9,-6); 
+		SerialSend('AT+COPS?\r',true).then ( (result)=> { 
+			if (result.includes("ERROR"))
+				{document.getElementById("COPS").value = result;}
+			else
+				{document.getElementById("COPS").value = result.slice(9,-6); }
+				
 			SerialSend('AT+CGDCONT?\r').then ( (result)=> { 
 				document.getElementById("CGDCONT").innerHTML = result.slice(2,-6);; 
 				if ($('#collapseNetwork').hasClass('show'))
@@ -756,14 +818,36 @@ function CheckSTDOUT()
 
 function ServalRunBin()
 {
-	SerialSend('at^susrw=1,"' + device_path + '"\r').then( (result)=> {
-	})
+	SerialSend('at^susrw=1,"' + device_path + '"\r')
 }
 function ServalStopBin()
 {
-	SerialSend('at^susrw=2,"' + device_path + '"\r').then( (result)=> {
+	SerialSend('at^susrw=2,"' + device_path + '"\r')
+}
+
+function ServalDeleteFile()
+{
+	SerialSend('at^sfsa="remove","' + device_path + '"\r').then( (result)=> {
+		ChangeDeviceDir(device_path.match(/(^.*)\//)[1]);
 	})
 }
+
+function ServalDeleteFolder()
+{
+	SerialSend('at^sfsa="rmdir","' + device_path + '"\r').then( (result)=> {
+		ChangeDeviceDir(device_path.match(/(^.*)\//)[1]);
+	})
+}
+
+function CreateFolder(name)
+{
+	SerialSend('at^sfsa="mkdir","' + device_path + "/" + name + '"\r').then( (result)=> {
+		ChangeDeviceDir(device_path);
+		$('#CreateFolderModal').modal('hide');
+	})
+}
+
+
 
 </script>
   </head>
@@ -811,7 +895,7 @@ function ServalStopBin()
 				  </div>
 				</div> -->
 
-					<pre class="terminal" id="terminal1"><span id="pre1" style="color:grey;"></span><b class="cursor" id="cursor">B</b>
+					<pre class="terminal" id="terminal1"><i id="pre1" style="color:grey;"></i><b class="cursor" id="cursor">B</b>
 					</pre>
 				</div>
 			</div>
@@ -997,19 +1081,21 @@ function ServalStopBin()
 				<ol class="breadcrumb py-1" id="breadcrumb" >
 				</ol>
 				<div class="btn-group" role="group" aria-label="Basic example" style="position:absolute;right:1rem;top:50%;transform:translateY(-50%);">
-				  <button id="fe_edit"  class="btn btn-default btn-sm fe_btn" data-toggle="tooltip" data-placement="top" title="Open/Edit"><i class="far fa-edit"></i></button>
-				  <button id="fe_save"  class="btn btn-default btn-sm fe_btn" data-toggle="tooltip" data-placement="top" title="Save"><i class="far fa-save"></i></button>
-				  <button id="fe_run"  class="btn btn-default btn-sm fe_btn" data-toggle="tooltip" data-placement="top" title="Run" onClick="javascript:ServalRunBin();"><i class="fas fa-play"></i></button>
-				  <button id="fe_stop"  class="btn btn-default btn-sm fe_btn" data-toggle="tooltip" data-placement="top" title="Stop" onClick="javascript:ServalStopBin();"><i class="fas fa-stop"></i></button>
-				  <button id="fe_create"  class="btn btn-default btn-sm fe_btn" data-toggle="tooltip" data-placement="top" title="Create"><i class="fas fa-plus"></i></button>
-				  <button id="fe_delete" class="btn btn-default btn-sm fe_btn" data-toggle="tooltip" data-placement="top" title="Delete"><i class="fas fa-trash"></i></button>
+				  <button id="fe_edit"  class="btn btn-default btn-sm fe_btn" title="Open/Edit"><i class="far fa-edit"></i></button>
+				  <button id="fe_save"  class="btn btn-default btn-sm fe_btn" title="Save"><i class="far fa-save"></i></button>
+				  <button id="fe_run"  class="btn btn-default btn-sm fe_btn"  title="Run" onClick="javascript:ServalRunBin();"><i class="fas fa-play"></i></button>
+				  <button id="fe_stop"  class="btn btn-default btn-sm fe_btn" title="Stop" onClick="javascript:ServalStopBin();"><i class="fas fa-stop"></i></button>
+				  <button id="fe_upload"  class="btn btn-default btn-sm fe_btn" title="Upload file" data-toggle="modal" data-target="#UploadFileModal"><i class="fas fa-file-upload"></i></button>
+				  <button id="fe_create"  class="btn btn-default btn-sm fe_btn" title="Create Folder"  data-toggle="modal" data-target="#CreateFolderModal"><i class="fas fa-folder-plus"></i></button>
+				  <button id="fe_rmfile" class="btn btn-default btn-sm fe_btn" data-toggle="tooltip" data-placement="top" title="Remove File" onClick="javascript:ServalDeleteFile();"><i class="fas fa-trash"></i></button>
+				  <button id="fe_rmdir" class="btn btn-default btn-sm fe_btn" data-toggle="tooltip" data-placement="top" title="Remove Folder" onClick="javascript:ServalDeleteFolder();"><i class="fas fa-trash"></i></button>
 				</div>
 			</div>
 			<div class="row">
 				<div class="col-sm-4" style="max-height:210px;overflow-y: auto; padding-right: 15px;">
 					<ul class="list-group" id="filelist"></ul>
 				</div>
-				<div class="col-sm-8" style=""><textarea class="form-control" rows="10" id="contents"></textarea></div>
+				<div class="col-sm-8" style=""><textarea style="font-family:monospace" class="form-control" rows="10" id="contents"></textarea></div>
 			</div>
 
 		  </div>
@@ -1049,7 +1135,71 @@ function ServalStopBin()
 		</div>
 		
 	</div>
-	
+
+<!-- UploadFileModal -->
+<div class="modal fade" id="UploadFileModal" tabindex="-1" role="dialog" aria-labelledby="exampleModalCenterTitle" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered" role="document">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="exampleModalLongTitle">Upload File to module</h5>
+        <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+	  <div class="modal-body">
+      <div class="input-group">
+		  <div class="custom-file">
+			<input type="file" class="custom-file-input" id="inputGroupFile01"
+			  aria-describedby="inputGroupFileAddon01">
+			<label class="custom-file-label" for="inputGroupFile01">Choose file</label>
+		  </div>
+	  </div>
+		<div class="form-check" style="margin-top:20px;">
+		  <input class="form-check-input" type="checkbox" value="" id="watchbin" style="margin-top:7px;">
+		  <label class="form-check-label" for="watchbin">
+			Trigger upload when file changes on PC
+		  </label>
+		</div>
+	  
+	  
+	  </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary btn-sm" data-dismiss="modal">Close</button>
+        <button type="button" class="btn btn-primary btn-sm" onClick="UploadBin(document.getElementById('inputGroupFile01').value);">Upload</button>
+      </div>
+    </div>
+  </div>
+</div>
+<!-- CreateFolderModal -->
+<div class="modal fade" id="CreateFolderModal" tabindex="-1" role="dialog" aria-labelledby="exampleModalCenterTitle" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered" role="document">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="exampleModalLongTitle">Create Folder</h5>
+        <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+	  <div class="modal-body">
+      <div class="input-group">
+		  <div class="custom-file">
+			<input class="form-control" type="text" id="CreateFolderName" placeholder="Folder name">
+
+		  </div>
+	  </div>
+	  
+	  </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary btn-sm" data-dismiss="modal">Close</button>
+        <button type="button" class="btn btn-primary btn-sm" onClick="CreateFolder(document.getElementById('CreateFolderName').value);">OK</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+
+
 </body>
 </html>
 
