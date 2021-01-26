@@ -8,14 +8,16 @@
 	<link rel="stylesheet" href="css/bootstrap4.min.css">
 	<link rel="stylesheet" href="css/custom.css">
 	<script src="js/jquery-3.4.1.slim.min.js"></script>
-	<script src="js/umd/popper.js"></script>
+	<script src="js/popper.min.js"></script>
 	<script src="js/bootstrap4.min.js"></script>
 	<link href="css/bootstrap-toggle.min.css" rel="stylesheet">
 	<script src="js/bootstrap-toggle.min.js"></script>
 	<link href= "css/fontawesome.min.css" rel="stylesheet">
 	<script>
 
-		
+
+
+	var UDPtestTimer;
 	// get the system clipboard
 	var clipboard = nw.Clipboard.get();
 
@@ -49,11 +51,23 @@
 	var FinishDownload;
 	var IgnoreNextAtError = false;
 	
-	if (typeof localStorage.lastPort === 'undefined' ) localStorage.lastPort = "";
+	if (typeof localStorage.lastPort 		=== 'undefined' ) localStorage.lastPort = "";
 	if (typeof localStorage.lastMonitorPort === 'undefined' ) localStorage.lastMonitorPort = 'None';
+	if (typeof localStorage.lastLogging 	=== 'undefined' ) localStorage.lastLogging = false;
+	if (typeof localStorage.lastLogFile 	=== 'undefined' ) localStorage.lastLogFile = '';
 
 	const ATDEBUG = false;
 		
+	
+	function log2file(data)
+	{
+		if ($('#toggle-Logging').prop('checked')) 
+		{
+			var timestamp = new Date();
+			fs.appendFileSync( localStorage.lastLogFile, "\n" + timestamp.toLocaleString() + "  " + data, 'utf8');
+		}
+	}
+	
 	function delay(t) {
 	   return new Promise(function(resolve) { 
 		   setTimeout(resolve, t)
@@ -76,7 +90,10 @@
 			last_cmd = cmd;
 			serialPort.drain();
 			delay(100).then( ()=> {
+				console.log("Serial >"+cmd);
 				serialPort.write(cmd);
+				log2file(">  " + cmd)
+				
 			});
 			//console.log("Start waiting for response");
 			timeout = 2000;
@@ -89,9 +106,12 @@
 					$('#MainPortDropdownButton').removeClass("blink");
 					if ( ATDEBUG ) console.log("modem response:", last_response);
 					
+					document.getElementById("pre1").innerHTML += last_response;
+					
+
 					document.getElementById("terminal1").scrollTop = document.getElementById("terminal1").scrollHeight;
 
-					var temp = last_response;
+					//var temp = last_response;
 					return resolve(last_response);
 				}
 			if ( !timeout-- ) 
@@ -100,7 +120,7 @@
 				SerialOpen();
 				//reject("Timeout waiting for modem response");
 			}
-			else setTimeout(waitForResponse, 100);
+			else setTimeout(waitForResponse, 50);
 		})();
 		});
 	}
@@ -145,7 +165,7 @@
 		.then((statresult)=>{
 
 	
-			//console.log(list);
+			console.log("statresult="+statresult);
 			index = 0; 
 
 			var filelist = document.getElementById("filelist");
@@ -153,9 +173,14 @@
 				filelist.removeChild(filelist.firstChild);
 			}
 
+			var folder = false;
 			var filesize = statresult.split("\n")[1].match(/\d+/g)
-			//console.log(statresult.split("\n")[5].match(/\d+/g));
-			if  (statresult.split("\n")[5].match(/\d+/g) == "16") // Folder
+			//console.log("lines =" + statresult.split("\n"));
+			//debugger;
+			if (["EXS","TX"].includes( device_family ) && statresult.split("\n")[5].includes("16")) { folder = true; }
+			if (("PLS" == device_family ) && (statresult.split("\n")[3].includes("16") || statresult.split("\n")[3].includes("18"))) { folder = true; }
+			//debugger;
+			if  (folder) // Folder
 			{
 
 				/*if (device_family == 'EXS') {
@@ -219,7 +244,7 @@
 							SerialSend('AT^SFSA="read",' + fh + ',' + filesize + '\r', true)
 							.then((reresult)=>{
 								list = reresult.split("\r\n")
-								console.log(list);
+								console.log("file contents:" + list);
 								for (i=0;i<list.length-5;i++)
 								{
 									document.getElementById("contents").value += list[i] + '\r\n';
@@ -275,6 +300,7 @@
 		{
 			console.log("Closing open port");
 			serialPort.close();
+			clearTimout(UDPtestTimer);
 		}
 		
 		//console.log("Opening " + port);
@@ -292,30 +318,31 @@
 			document.getElementById("accordion").style.visibility = 'visible';
 
 			serialPort.drain();
-			serialPort.on('data', function(data) {
-				last_response_buf += data ;
-				//console.log("data="+data);
-				//console.log("type=", typeof (data));
+			serialPort.on('data', function ProcessResponse(data) {
+			
+				//console.timeEnd("Since last response"); 
+				//console.time("ProcessResponse"); 
+				last_response_buf += data.toString() ;
+				console.log("Serial < ",data.toString());
+				log2file("<  " + data.toString());
 				
-
-				if (data.includes("CONNECT") || data.includes("\r\nOK") || data.includes("ERROR") || data.includes("\r\n>") || data.includes("\r\n^SUSRW"))
+				if (last_response_buf.includes("CONNECT") || last_response_buf.includes("\r\nOK") || last_response_buf.includes("ERROR") || last_response_buf.includes("\r\n>") || last_response_buf.includes("\r\n^SUSRW") || last_response_buf.includes("\r\n^SISW: "))
 				{
-					last_response = last_response_buf;
-					//console.log("last_response=",last_response);
+					//console.log("Serial < ",last_response_buf);
 					
-					document.getElementById("pre1").innerHTML += last_response;
-					document.getElementById("terminal1").scrollTop = document.getElementById("terminal1").scrollHeight;
+					//document.getElementById("pre1").innerHTML += last_response;
+					//document.getElementById("terminal1").scrollTop = document.getElementById("terminal1").scrollHeight;
 
-
-					if (data.includes("ERROR")) {
+					last_response = last_response_buf;
+					
+					if (last_response_buf.includes("ERROR")) {
 						if ( ATDEBUG ) console.log("modem response:",last_response)
 						if (!IgnoreNextAtError) alert(last_response);
 						IgnoreNextAtError = false;
 					}
-				
-					last_response_buf = "";
 				}
-				
+				//console.time("Since last response");
+				//console.timeEnd("ProcessResponse");
 			});
 			
 			SerialSend("AT+CMEE=2;E0\r")  // verbose ERROR + no Echo 
@@ -353,6 +380,7 @@
 		document.getElementById("ati2").innerHTML = "no modem";
 		document.getElementById("closeBtn").style.visibility = 'hidden';   
 		document.getElementById("accordion").style.visibility = 'hidden'; 
+		clearTimout(UDPtestTimer);
 		localStorage.lastPort = "";
 	}
 
@@ -580,6 +608,8 @@
 	
 $(function() {
 
+	document.getElementById('logfilelable').innerHTML = localStorage.lastLogFile;
+
   window.addEventListener('keydown', function (e) {
 
 	if (document.activeElement != document.body) return;
@@ -698,11 +728,11 @@ function UploadBin(file)
 	return new Promise(function (resolve, reject) {
 		File = file.replace(/.*\\/, '');
 		console.log("Removing old file " + File);
-		SerialSend('AT^SFSA="remove","' + device_path + '/' + File + '"\r', true)
+		SerialSend('AT^SFSA="remove","' + (device_path + '/').replace(/\/\//g,"/") + File + '"\r', true)
 		.then( () => {
 		
 			console.log("Opening " + File + " for writing");
-			SerialSend('AT^SFSA="open","' + device_path + '/' + File + '",9\r', true)
+			SerialSend('AT^SFSA="open","' + (device_path + '/').replace(/\/\//g,"/") + File + '",9\r', true)
 			.then( (opresult) => {
 						
 				match = opresult.match(/(\d+), ?0/m);
@@ -782,20 +812,45 @@ function Upload(file)
     
 function NetworkRefresh() {
 	if (!$('#collapseNetwork').hasClass('show')) return;
-	SerialSend('AT^SMONI\r').then( (result)=> {
-		document.getElementById("SMONI").value = result.slice(10,-6)
-		SerialSend('AT+COPS?\r',true).then ( (result)=> { 
-			if (result.includes("ERROR"))
-				{document.getElementById("COPS").value = result;}
-			else
-				{document.getElementById("COPS").value = result.slice(9,-6); }
-				
-			SerialSend('AT+CGDCONT?\r').then ( (result)=> { 
-				document.getElementById("CGDCONT").innerHTML = result.slice(2,-6);; 
-				if ($('#collapseNetwork').hasClass('show'))
-					//console.log(console.time);
-					setTimeout(NetworkRefresh,3000);
-					return;
+		SerialSend('AT+CPIN?\r', true).then ( (result)=> { 
+			document.getElementById("CPIN").value = result.split("\n")[1].replace('+CPIN:','');
+			SerialSend('AT+CIMI\r', true).then ( (result)=> { 
+				document.getElementById("CIMI").value = result.split("\n")[1];
+					SerialSend('AT+GSN\r', true).then ( (result)=> { 
+					document.getElementById("GSN").value = result.split("\n")[1];
+						SerialSend('AT+CREG?\r', true).then ( (result)=> { 
+						document.getElementById("CREG").value = result.split("\n")[1].replace('+CREG:','');
+							SerialSend('AT^SMONI\r').then( (result)=> {
+							document.getElementById("SMONI").value = result.slice(10,-6)
+								SerialSend('AT+COPS?\r',true).then ( (result)=> { 
+								if (result.includes("ERROR"))
+									{document.getElementById("COPS").value = result;}
+								else
+									{document.getElementById("COPS").value = result.slice(9,-6); }
+									
+									SerialSend('AT+CGPADDR\r').then( (result)=> {
+									document.getElementById("CGPADDR").value = result.split("\n")[1].replace('+CGPADDR:','');
+									
+										SerialSend('AT+CPSMS?\r').then( (result)=> {
+										document.getElementById("CPSMS").value = result.split("\n")[1].replace('+CPSMS:','');
+										
+											SerialSend('AT+CEDRXRDP\r').then( (result)=> {
+											document.getElementById("CEDRXRDP").value = result.split("\n")[1].replace('+CEDRXRDP:','');
+										
+									
+									
+												SerialSend('AT+CGDCONT?\r').then ( (result)=> { 
+												document.getElementById("CGDCONT").innerHTML = result.slice(2,-6);
+													SerialSend('AT^SCFG?\r').then ( (result)=> { 
+													document.getElementById("SCFG").innerHTML = result.slice(2,-6);
+											})
+										})
+									})
+								})
+							})
+						})
+					})
+				})
 			})
 		})
 	})  
@@ -827,27 +882,157 @@ function ServalStopBin()
 
 function ServalDeleteFile()
 {
-	SerialSend('at^sfsa="remove","' + device_path + '"\r').then( (result)=> {
+	SerialSend('at^sfsa="remove","' + device_path.replace(/\/\//g,"/") + '"\r').then( (result)=> {
 		ChangeDeviceDir(device_path.match(/(^.*)\//)[1]);
 	})
 }
 
 function ServalDeleteFolder()
 {
-	SerialSend('at^sfsa="rmdir","' + device_path + '"\r').then( (result)=> {
+	SerialSend('at^sfsa="rmdir","' + device_path.replace(/\/\//g,"/") + '"\r').then( (result)=> {
 		ChangeDeviceDir(device_path.match(/(^.*)\//)[1]);
 	})
 }
 
 function CreateFolder(name)
 {
-	SerialSend('at^sfsa="mkdir","' + device_path + "/" + name + '"\r').then( (result)=> {
+	var fullpath = (device_path == "a:/") ? "a:/" + name : device_path + "/" + name
+	SerialSend('at^sfsa="mkdir","' + fullpath + '"\r').then( (result)=> {
 		ChangeDeviceDir(device_path);
 		$('#CreateFolderModal').modal('hide');
 	})
 }
 
+function TurnExtURCOn()
+{
+	SerialSend('AT+CMEE=2;+CREG=2;+CEREG=2;+CGREG=2;^SIND="ceer",1;^SIND="nitz",1\r').then( (result)=> {
+	})
+}
 
+function TurnExtURCOff()
+{
+	SerialSend('AT+CMEE=0;+CREG=0;+CEREG=0;+CGREG=0;^SIND="ceer",0;^SIND="nitz",0\r').then( (result)=> {
+	})
+}
+
+
+
+function UDPtest()
+{
+	if ($('#toggle-UDPtest').prop('checked') == false) return;
+	
+	SerialSend('AT^SISC=0\r').then( (result)=> {
+		SerialSend('AT^SICA=1,1\r').then( (result)=> {
+			SerialSend('at^scfg=tcp/withurcs,off\r').then( (result)=> {
+				SerialSend('AT+CGATT=1\r').then( (result)=> {
+					SerialSend('AT+CGDCONT=1,"IP","' + document.getElementById("UDPtestAPN").value + '"\r').then( (result)=> {
+						SerialSend('AT^SICA=1,1\r').then( (result)=> {
+							SerialSend('AT^SISS=0,srvtype,socket\r').then( (result)=> {
+								SerialSend('AT^SISS=0,conid,1\r').then( (result)=> {
+									SerialSend('AT^SISS=0,address,"sockudp://' + document.getElementById("IPaddr").value + ':' + document.getElementById("UDPport").value + '"\r').then( (result)=> {
+										SerialSend('AT^SISO=0\r').then( (result)=> {
+											SerialSend('AT^SMONI\r').then( (result)=> {
+												console.log("SMONI=" + result,result.split("\n")[1] + result,result.split("\n")[1].length);
+												var si = result.split("\n")[1];
+												SerialSend('AT^SISI=0\r').then( (result)=> {
+													SerialSend('AT^SISW=0,' + si.length + '\r').then( (result)=> {
+														//console.log("Serial >"+document.getElementById("UDPdata").value);
+														serialPort.write(si + '\r');
+															setTimeout( function () {
+															SerialSend('AT^SISI=0\r').then( (result)=> {
+																//console.log(result.split("\n")[1]);
+																	SerialSend('AT^SISR=0,255\r').then( (result)=> {
+																		//console.log(result.split("\n")[1]);
+																		SerialSend('AT^SISC=0\r').then( (result)=> {
+																			//console.log(result.split("\n")[2]);
+																		
+																			if ($('#toggle-UDPtest').prop('checked') && ($('#RepeatSelect').children("option:selected").val()>0))
+																			{
+																				UDPtestTimer = setTimeout(UDPtest, $('#RepeatSelect').children("option:selected").val() )
+																			}
+																	})
+																})
+															})
+														},500); // after AT^SISW before AT^SISI
+													})						
+												})						
+											})						
+										})						
+									})						
+								})													
+							})					
+						})				
+					})		
+				})						
+			})
+		})
+	})
+}
+
+function RefreshPSMeDRXSuspend()
+{
+	//if (!$('#collapseLPM').hasClass('show')) return;
+	SerialSend('AT+CPSMS?\r').then( (result)=> { 
+		//console.dir(result.split("\n")[1].split(","))
+		if (result.split("\n")[1].charAt(8) == "0") 
+			$('#toggle-PSMmode').bootstrapToggle('off');
+		else
+			$('#toggle-PSMmode').bootstrapToggle('on')
+		document.getElementById('RequestedPeriodicRAU').value = result.split("\n")[1].split(",")[1].replace(/"/g,'');
+		document.getElementById('RequestedGprsReadyTime').value = result.split("\n")[1].split(",")[2].replace(/"/g,'');
+		document.getElementById('RequestedPeriodicTAU').value = result.split("\n")[1].split(",")[3].replace(/"/g,'');
+		document.getElementById('RequestedActiveTime').value = result.split("\n")[1].split(",")[4].replace(/"/g,'');
+
+		SerialSend('AT+CEDRXS?\r').then( (result)=> { 
+		
+			console.dir(result.split("\n")[1].split(","))
+			
+			document.getElementById('eDRXvalues').innerHTML = result.substring(2).replace('\r\nOK\r\n','');
+						
+			SerialSend('AT^SCFG="MEOpMode/PowerMgmt/Suspend"\r').then( (result)=> { 
+				if (result.split("\n")[1].charAt(37) == "0") 
+					$('#toggle-demo').bootstrapToggle('off');
+				else
+					$('#toggle-demo').bootstrapToggle('on')
+			})
+		})
+	})
+}
+
+function ApplyPSM()
+{
+	
+	var cmd = "AT+CPSMS="
+	if ( $('#toggle-PSMmode').prop('checked') )
+		cmd += "1,";
+	else
+		cmd += "0,";
+	
+	cmd += document.getElementById('RequestedPeriodicRAU').value+',';
+	cmd += document.getElementById('RequestedGprsReadyTime').value+',';
+	cmd += document.getElementById('RequestedPeriodicTAU').value+',';
+	cmd += document.getElementById('RequestedActiveTime').value;
+	
+	SerialSend(cmd + '\r');
+}
+
+function ApplyeDRX()
+{
+	
+	var cmd = "AT+CEDRXS="
+	if ( $('#toggle-eDRXmode').prop('checked') )
+	{
+		cmd += "1," + $('#eDRXacttype').children("option:selected").val();
+		cmd += ',' + $('#Requested_eDRX_value').val();
+	}
+	else
+		cmd += "0," + $('#eDRXacttype').children("option:selected").val()
+	
+	SerialSend(cmd + '\r').then( (result)=> { 
+		console.log(" - " + result)
+		setTimeout(RefreshPSMeDRXSuspend(),100); 
+	})
+}
 
 </script>
   </head>
@@ -884,19 +1069,45 @@ function CreateFolder(name)
 
 			<div id="collapseTerminal" class="collapse" aria-labelledby="headingOne">
 				<div class="card-body">
-				<!--
-				<div class="dropdown ">
-				  <a  type="text" id="dropdownMenuButton" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
-					<span class="glyphicon glyphicon-cog" aria-hidden="true"></span>
-				  </a>
-				  <div class="dropdown-menu" aria-labelledby="dropdownMenuButton">
-					<a class="dropdown-item" href="javascript:">Clear</a>
-					<a class="dropdown-item" href="javascript:">Save</a>
-				  </div>
-				</div> -->
-
 					<pre class="terminal" id="terminal1"><i id="pre1" style="color:grey;"></i><b class="cursor" id="cursor">B</b>
 					</pre>
+
+					<br>
+
+					<div class="row">
+						<div class="col-4">
+								Logging &nbsp;<input id="toggle-Logging" type="checkbox" data-width="50" data-size="small"> 
+						</div>
+						<div class="col-8">
+						      <div class="input-group">
+								  <div class="custom-file custom-file form-control-sm">
+									<input type="file" class="custom-file-input form-control form-control-sm" id="logfile"  onChange="localStorage.lastLogFile=document.getElementById('logfile').value;document.getElementById('logfilelable').innerHTML = document.getElementById('logfile').value;" >
+									<label class="custom-file-label" for="logfile" id="logfilelable">Log file</label>
+								  </div>
+							  </div>
+						</div>
+
+					</div>
+		
+				<script>
+				  $(function() {
+					//console.log("logging:" ,localStorage.lastLogging);
+					$('#toggle-Logging').bootstrapToggle(eval(localStorage.lastLogging) ? "on" : "off");
+					
+					$('#toggle-Logging').change(function() {
+							localStorage.lastLogging = $(this).prop('checked');
+							if ($(this).prop('checked'))
+							{
+								log2file(" - Logging started - ");						
+							}
+							else
+							{
+								log2file(" - Logging stopped - ");
+							}
+						})
+					})
+				</script>
+
 				</div>
 			</div>
 		</div>
@@ -1069,7 +1280,7 @@ function CreateFolder(name)
 		
 		<div class="card">
 			<div class="card-header" id="headingOne" role="tab">
-				<a data-toggle="collapse" data-target="#collapseFileExplorer" aria-expanded="false" aria-controls="collapseNetwork" onclick='setTimeout(ChangeDeviceDir("a:/"),100);'>
+				<a data-toggle="collapse" data-target="#collapseFileExplorer" aria-expanded="false" aria-controls="collapseFileExplorer" onclick='setTimeout(ChangeDeviceDir("a:/"),100);'>
 					<h6 class="py-2">File Explorer</h6>
 				</a>
 			</div>
@@ -1105,34 +1316,315 @@ function CreateFolder(name)
 		<div class="card">
 			<div class="card-header" id="headingOne" role="tab">
 				<a data-toggle="collapse" data-target="#collapseNetwork" aria-expanded="false" aria-controls="collapseNetwork" onclick="setTimeout(NetworkRefresh,500);">
-					<h6 class="py-2">Network registration</h6>
+					<h6 class="py-2">Configuration & Network registration status</h6>
 				</a>
 			</div>
 
 		<div id="collapseNetwork" class="collapse" aria-labelledby="headingOne">
 		  <div class="card-body">
 
-			<div class="input-group mb-3 input-group-sm">
+			<div class="input-group mb-2 input-group-sm">
 			  <div class="input-group-prepend">
-				<span style="width:80px;" class="input-group-text" id="basic-addon1">^SMONI:</span>
+				<span style="width:80px;" class="input-group-text" id="basic-addon1">+CPIN</span>
+			  </div>
+			  <input id="CPIN" type="text" class="form-control" disabled>
+			</div>
+
+			<div class="input-group mb-2 input-group-sm">
+			  <div class="input-group-prepend">
+				<span style="width:80px;" class="input-group-text" id="basic-addon1">+CIMI</span>
+			  </div>
+			  <input id="CIMI" type="text" class="form-control" disabled>
+			</div>
+
+			<div class="input-group mb-2 input-group-sm">
+			  <div class="input-group-prepend">
+				<span style="width:80px;" class="input-group-text" id="basic-addon1">+GSN</span>
+			  </div>
+			  <input id="GSN" type="text" class="form-control" disabled>
+			</div>
+
+			<div class="input-group mb-2 input-group-sm">
+			  <div class="input-group-prepend">
+				<span style="width:80px;" class="input-group-text" id="basic-addon1">+CREG</span>
+			  </div>
+			  <input id="CREG" type="text" class="form-control" disabled>
+			</div>
+
+			<div class="input-group mb-2 input-group-sm">
+			  <div class="input-group-prepend">
+				<span style="width:80px;" class="input-group-text" id="basic-addon1">^SMONI</span>
 			  </div>
 			  <input id="SMONI" type="text" class="form-control" disabled>
 			</div>
 
-			<div class="input-group mb-3 input-group-sm">
+			<div class="input-group mb-2 input-group-sm">
 			  <div class="input-group-prepend">
-				<span style="width:80px;" class="input-group-text" id="basic-addon1">+COPS:</span>
+				<span style="width:80px;" class="input-group-text" id="basic-addon1">+COPS</span>
 			  </div>
 			  <input id="COPS" type="text" class="form-control" disabled>
 			</div>
 
-			<div class="input-group mb-3 input-group-sm">
-				<span  id="CGDCONT" class="input-group-text" style="white-space: pre;text-align: left;width: 100%;">+CGDCONT:</span>
+			<div class="input-group mb-2 input-group-sm">
+			  <div class="input-group-prepend">
+				<span style="width:80px;" class="input-group-text" id="basic-addon1">+CGPADDR</span>
+			  </div>
+			  <input id="CGPADDR" type="text" class="form-control" disabled>
+			</div>
+
+			<div class="input-group mb-2 input-group-sm">
+			  <div class="input-group-prepend">
+				<span style="width:80px;" class="input-group-text" id="basic-addon1">+CPSMS</span>
+			  </div>
+			  <input id="CPSMS" type="text" class="form-control" disabled>
+			</div>
+
+			<div class="input-group mb-2 input-group-sm">
+			  <div class="input-group-prepend">
+				<span style="width:80px;" class="input-group-text" id="basic-addon1">+CEDRXRDP</span>
+			  </div>
+			  <input id="CEDRXRDP" type="text" class="form-control" disabled>
+			</div>
+
+			<div class="input-group mb-2 input-group-sm">
+				<span  id="CGDCONT" class="input-group-text" style="white-space: pre;text-align: left;width: 100%; font-size: 14px;">+CGDCONT:</span>
+			</div>
+
+			<div class="input-group mb-2 input-group-sm">
+				<span  id="SCFG" class="input-group-text" style="white-space: pre;text-align: left;width: 100%; font-size: 14px;">^SCFG:</span>
 			</div>
 
 		  </div>
 		</div>
 		</div>
+		
+		<div class="card">
+			<div class="card-header" id="headingOne" role="tab">
+				<a data-toggle="collapse" data-target="#collapseUDP" aria-expanded="false" aria-controls="collapseUDP">
+					<h6 class="py-2">UDP test</h6>
+				</a>
+			</div>
+			<div id="collapseUDP" class="collapse" aria-labelledby="headingOne">
+			  <div class="card-body">
+			  			  
+				<div class="input-group input-group-sm mb-2">
+				  <div class="input-group-prepend">
+					<span class="input-group-text" id="inputGroup-sizing-sm">APN</span>
+				  </div>
+				  <input id="UDPtestAPN" value="" type="text" class="form-control" aria-label="Small" aria-describedby="inputGroup-sizing-sm">
+				&nbsp;
+				  <div class="input-group-prepend">
+					<label class="input-group-text" for="RepeatSelect">repeat</label>
+				  </div>
+				  <select class="custom-select" id="RepeatSelect">
+					<option selected value="0">no</option>
+					<option value="60000">1 min</option>
+					<option value="180000">3 min</option>
+					<option value="600000">10 min</option>
+					<option value="1800000">30 min</option>
+				  </select>
+				</div>
+				<div class="input-group input-group-sm mb-2">
+				  <div class="input-group-prepend">
+					<span class="input-group-text" id="inputGroup-sizing-sm">IP addr</span>
+				  </div>
+				  <input id="IPaddr" value="78.47.86.194" type="text" class="form-control" aria-label="Small" aria-describedby="inputGroup-sizing-sm">
+				  &nbsp;
+				  <div class="input-group-prepend">
+					<span class="input-group-text" id="inputGroup-sizing-sm">UDP port</span>
+				  </div>
+				  <input id="UDPport" value="7" type="text" class="form-control" aria-label="Small" aria-describedby="inputGroup-sizing-sm">
+				  
+				</div>
+				<div class="row">
+					<div class="col-3 mx-auto">
+						<div class="text-center">
+								<input id="toggle-UDPtest" type="checkbox" data-width="100" data-size="small">
+						</div>
+					</div>
+				</div>
+		
+				<script>
+				  $(function() {
+					$('#toggle-UDPtest').bootstrapToggle();
+					
+					$('#toggle-UDPtest').change(function() {
+						if ($(this).prop('checked'))
+						{
+							//start UDP test
+							UDPtest();
+						
+						}
+						else
+						{
+							if (typeof variable !== 'undefined') {
+								clearTimout(UDPtestTimer);
+							}
+						}
+						})
+					})
+				</script>
+				
+			</div>
+			</div>
+		</div>
+		
+		<div class="card">
+			<div class="card-header" id="headingOne" role="tab">
+				<a data-toggle="collapse" data-target="#collapseLPM" aria-expanded="false" aria-controls="collapseLPM" onclick="setTimeout(RefreshPSMeDRXSuspend(),100);">
+					<h6 class="py-2">PSM, eDRX, suspend modes</h6>
+				</a>
+			</div>
+			<div id="collapseLPM" class="collapse" aria-labelledby="headingOne">
+			  <div class="card-body">
+			  
+			  <h5 class="card-title">PSM</h5>
+				
+
+					<div class="input-group input-group-sm mb-2">
+
+					<div class="input-group-prepend">
+						<span class="input-group-text" id="inputGroup-sizing-sm1">Mode</span>
+					</div>
+				  	<input id="toggle-PSMmode" type="checkbox" data-width="100" data-size="small" aria-describedby="inputGroup-sizing-sm1" data-on="Enabled" data-off="Disabled" data-style="quick">
+					<br>
+					<script>
+					  $(function() {
+						$('#toggle-PSMmode').bootstrapToggle();
+						})
+					</script>
+				  </div>
+  				  
+					<div class="input-group input-group-sm mb-2">
+						<div class="input-group-prepend">
+							<span class="input-group-text" id="RequestedPeriodicRAU-sm">RequestedPeriodicRAU</span>
+						</div>
+						<input id="RequestedPeriodicRAU" value="" type="text" class="form-control" aria-label="Small" aria-describedby="RequestedPeriodicRAU-sm">
+						&nbsp;
+						<div class="input-group-prepend">
+							<span class="input-group-text" id="RequestedGprsReadyTime-sm">RequestedGprsReadyTime</span>
+						</div>
+						<input id="RequestedGprsReadyTime" value="" type="text" class="form-control" aria-label="Small" aria-describedby="RequestedGprsReadyTime-sm">
+					</div>
+
+					<div class="input-group input-group-sm mb-2">
+						<div class="input-group-prepend">
+							<span class="input-group-text" id="RequestedPeriodicTAU-sm">RequestedPeriodicTAU</span>
+						</div>
+						<input id="RequestedPeriodicTAU" value="" type="text" class="form-control" aria-label="Small" aria-describedby="RequestedPeriodicTAU-sm">
+						&nbsp;
+						<div class="input-group-prepend">
+							<span class="input-group-text" id="RequestedActiveTime-sm">RequestedActiveTime</span>
+						</div>
+						<input id="RequestedActiveTime" value="" type="text" class="form-control" aria-label="Small" aria-describedby="RequestedActiveTime-sm">
+					</div>
+				  
+					<a href="#" class="btn btn-primary btn-sm" onClick="ApplyPSM();">Apply</a>
+				
+					<hr>
+					<h5 class="card-title">eDRX</h5>
+				
+
+					<div class="container">
+					   <div class="row">
+						 <div class="col-sm-8" style="padding-left: 0px;">
+						   <div class="input-group input-group-sm mb-2">
+
+							<div class="input-group-prepend">
+								<span class="input-group-text" id="toggle-eDRXmode-sm">Mode</span>
+							</div>
+							<input id="toggle-eDRXmode" type="checkbox" data-width="100" data-size="small" aria-describedby="toggle-eDRXmode-sm" data-on="Enabled" data-off="Disabled" data-style="quick">
+							<br>
+							<script>
+							  $(function() {
+								$('#toggle-eDRXmode').bootstrapToggle();
+								})
+							</script>
+						  
+						   </div>
+						   <div class="input-group input-group-sm mb-2">
+
+						  
+						  <div class="input-group-prepend">
+							<label class="input-group-text" for="eDRXacttype">Type of access tech</label>
+						  </div>
+						  <select class="custom-select" id="eDRXacttype">
+							<option value="0">using eDRX.</option>
+							<option value="2">GSM</option>
+							<option selected value="4">CatM</option>
+							<option value="5">NB-IoT</option>
+						  </select>
+						  </div>
+						  
+						  
+							<div class="input-group input-group-sm mb-2">
+								<div class="input-group-prepend">
+									<span class="input-group-text" id="Requested_eDRX_value-sm">Requested_eDRX_value</span>
+								</div>
+								<input id="Requested_eDRX_value" value="" type="text" class="form-control" aria-label="Small" aria-describedby="Requested_eDRX_value-sm">
+							</div>
+						 </div>
+						 <!-- /.col-sm-6 -->
+						 <div class="col-sm-4" style="padding-right: 0px;">
+						   <span  id="eDRXvalues" class="input-group-text" style="white-space: pre;text-align: left;width: 100%; font-size: 14px;">OK</span>
+						 </div>
+						 <!-- /.col-sm-6 -->
+					   </div>
+					   <!-- /.row -->
+					</div>
+					<!-- /.container -->					
+					
+					<a href="#" class="btn btn-primary btn-sm" onClick="ApplyeDRX();">Apply</a>
+					<hr>
+					
+					<h5 class="card-title">Suspend mode</h5>
+					
+					<input id="toggle-suspend" type="checkbox" data-width="100" data-size="small" aria-describedby="toggle-suspend-sm" data-on="Enabled" data-off="Disabled" data-style="quick">
+					<br>
+			
+					<script>
+					  $(function() {
+						$('#toggle-suspend').bootstrapToggle();
+						
+						$('#toggle-suspend').change(function() {
+													
+						if ($(this).prop('checked'))
+						{
+								SerialSend('AT^SCFG="MEOpMode/PowerMgmt/Suspend","1","1"\r')
+						}
+						else
+						{
+								SerialSend('AT^SCFG="MEOpMode/PowerMgmt/Suspend","0"\r')						}
+						})
+					  })
+					</script>
+
+					
+			</div>
+		</div>
+		 
+		<div class="card">
+			<div class="card-header" id="headingOne" role="tab">
+				<a data-toggle="collapse" data-target="#collapseURC" aria-expanded="false" aria-controls="collapseURC" onclick="/*setTimeout(URCRefresh,500);*/">
+					<h6 class="py-2">Configure the EXTENDED URC reporting</h6>
+				</a>
+			</div>
+			<div id="collapseURC" class="collapse" aria-labelledby="headingOne">
+			  <div class="card-body">
+				
+				<div class="container">
+				<div class="row justify-content-center">
+					<div class="col col-sm-2"><button class="btn btn-primary btn-xs" type="button" onClick="TurnExtURCOn();">On</button></div>
+					<div class="col col-sm-2"><button class="btn btn-secondary btn-xs" type="button" onClick="TurnExtURCOff();">Off</button></div>
+				</div>
+				</div>
+				
+
+			  </div>
+			</div>
+		</div>
+		 
+		
 		
 	</div>
 
@@ -1149,8 +1641,7 @@ function CreateFolder(name)
 	  <div class="modal-body">
       <div class="input-group">
 		  <div class="custom-file">
-			<input type="file" class="custom-file-input" id="inputGroupFile01"
-			  aria-describedby="inputGroupFileAddon01">
+			<input type="file" class="custom-file-input" id="inputGroupFile01" aria-describedby="inputGroupFileAddon01">
 			<label class="custom-file-label" for="inputGroupFile01">Choose file</label>
 		  </div>
 	  </div>
